@@ -1,0 +1,24 @@
+# /etc/systemd/system/zoneapp.service
+[Unit]
+Description=Zone Levels API
+After=network.target
+
+[Service]
+Type=simple
+User=zoneapp
+Group=zoneapp
+WorkingDirectory=/opt/zoneapp/backend
+EnvironmentFile=/opt/zoneapp/.env
+ExecStart=/opt/zoneapp/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+
+# hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/zoneapp/data
+
+[Install]
+WantedBy=multi-user.target

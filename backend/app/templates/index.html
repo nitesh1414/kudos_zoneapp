@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zone Levels</title>
+<style>
+ :root{--bg:#0f1115;--card:#171a21;--line:#262b36;--txt:#e6e6e6;--dim:#8b93a1;
+       --red:#f85149;--grn:#3fb950;--amb:#d29922;--blu:#2f6feb}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+ .wrap{max-width:1080px;margin:0 auto;padding:24px}
+ h1{font-size:20px;margin:0 0 2px}
+ .sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+ .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+ .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#9fb4d0;margin:0 0 14px}
+ table{width:100%;border-collapse:collapse}
+ th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);
+    font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
+ td{padding:7px 8px;border-bottom:1px solid #1c212a;font-variant-numeric:tabular-nums}
+ tr:last-child td{border-bottom:0}
+ .R{color:var(--red);font-weight:600}.S{color:var(--grn);font-weight:600}.AT{color:var(--amb);font-weight:600}
+ .rowR{background:rgba(248,81,73,.05)}.rowS{background:rgba(63,185,80,.05)}.rowAT{background:rgba(210,153,34,.10)}
+ .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+ .on{background:var(--grn)}.off{background:var(--red)}
+ .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+ .kv{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-bottom:1px solid #1c212a}
+ .kv span:first-child{color:var(--dim)}
+ label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px}
+ input{width:100%;padding:9px 10px;background:var(--bg);border:1px solid #2c323d;border-radius:6px;color:var(--txt);font-size:13px}
+ button{background:var(--blu);color:#fff;border:0;padding:9px 15px;border-radius:6px;font-size:13px;cursor:pointer;margin:12px 8px 0 0}
+ button.sec{background:#2c323d}
+ button:hover{opacity:.9}
+ .msg{font-size:12px;color:var(--dim);margin-top:10px;word-break:break-word}
+ .note{font-size:11px;color:var(--dim);font-style:italic;margin-top:10px;line-height:1.6}
+ .tag{font-size:10px;padding:2px 7px;border-radius:10px;background:#2c323d;color:var(--dim)}
+ details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:8px}
+</style>
+</head>
+<body><div class="wrap">
+<h1>Zone Levels</h1>
+<div class="sub" id="sub">Next-session support and resistance, with historical base rates.</div>
+
+<div class="card">
+  <h2>Status</h2>
+  <div class="grid">
+    <div>
+      <div class="kv"><span>Data in database</span><b id="hBars">-</b></div>
+      <div class="kv"><span>Sessions scored</span><b id="hSess">-</b></div>
+      <div class="kv"><span>Zone observations</span><b id="hObs">-</b></div>
+    </div>
+    <div>
+      <div class="kv"><span>Broker</span><b id="hBroker">-</b></div>
+      <div class="kv"><span>Symbol</span><b id="hSym">-</b></div>
+      <div class="kv"><span>Server time</span><b id="hTime">-</b></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Next session zones <span class="tag" id="basisTag"></span></h2>
+  <div class="msg" id="basisLine"></div>
+  <table id="lvTbl"><thead><tr>
+    <th>Zone</th><th>Level</th><th>Range</th><th>Strength</th><th>Built from</th>
+    <th>Touch rate</th><th>Held</th></tr></thead><tbody></tbody></table>
+  <div class="note" id="lvNote"></div>
+</div>
+
+<div class="grid">
+  <div class="card"><h2>Zone base rates by strength</h2>
+    <table id="starTbl"><thead><tr><th>Stars</th><th>n</th><th>Touch %</th><th>Bounce %</th><th>Break %</th><th>Held %</th></tr></thead><tbody></tbody></table>
+    <div class="note" id="starNote"></div>
+  </div>
+  <div class="card"><h2>Gap fill curve</h2>
+    <table id="gapTbl"><thead><tr><th>|Gap| %</th><th>n</th><th>Fill %</th><th>Trend-day %</th></tr></thead><tbody></tbody></table>
+    <div class="note">Fill = price touched the previous close at some point during the session.</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card"><h2>By CPR day type</h2>
+    <table id="dtTbl"><thead><tr><th>Type</th><th>n</th><th>Trend-day %</th><th>Fill %</th><th>Up %</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="card"><h2>Recent sessions</h2>
+    <table id="sesTbl"><thead><tr><th>Date</th><th>Type</th><th>Gap %</th><th>Open</th><th>T/H/B</th></tr></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Data</h2>
+  <label>API key for this app (X-API-Key)</label><input id="apiKey" type="password" placeholder="ZONEAPP_API_KEY">
+  <label>Upload a bars CSV (columns: time, open, high, low, close)</label>
+  <input id="csvFile" type="file" accept=".csv">
+  <button onclick="uploadCsv()">Upload &amp; rebuild</button>
+  <button class="sec" onclick="loadAll()">Refresh dashboard</button>
+  <div class="msg" id="msg">No broker is connected yet — see brokers/README.md to add one. CSV upload works today with no credentials needed.</div>
+</div>
+
+<div class="note">
+  Base rates on this page describe what happened in the stored sample. They are not forecasts.
+  The random-line baseline measured on this dataset was about 62% bounce-on-touch, so compare
+  zone numbers against 62, not against 50. Star rating tracks how often a level is REACHED,
+  not how often it holds.
+</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const key = () => $('apiKey').value.trim();
+const j = async (u, o) => (await fetch(u, o)).json();
+async function post(u, body){
+  return j(u, {method:'POST', headers:{'Content-Type':'application/json','X-API-Key':key()},
+               body: JSON.stringify(body||{})});
+}
+const stars = n => '\u2605'.repeat(n);
+
+async function loadAll(){
+  try{
+    const h = await j('/api/health');
+    $('hBars').textContent = h.bars.toLocaleString();
+    $('hSess').textContent = h.sessions.toLocaleString();
+    $('hObs').textContent  = h.zone_observations.toLocaleString();
+    $('hSym').textContent  = h.symbol;
+    $('hTime').textContent = h.server_time;
+  }catch(e){}
+
+  let zs = {by_stars:[]};
+  try{ zs = await j('/api/stats/zones'); }catch(e){}
+  const rateByStar = {};
+  (zs.by_stars||[]).forEach(r => rateByStar[r.group] = r);
+  const tb = $('starTbl').querySelector('tbody'); tb.innerHTML='';
+  (zs.by_stars||[]).forEach(r=>{
+    tb.innerHTML += `<tr><td>${stars(+r.group)}</td><td>${r.n}</td><td>${r.touch_pct??'-'}</td>
+      <td>${r.bounce_pct??'-'}</td><td>${r.break_pct??'-'}</td><td>${r.hold_pct??'-'}</td></tr>`;
+  });
+  $('starNote').textContent = zs.baseline_note || '';
+
+  try{
+    const L = await j('/api/levels/next');
+    $('basisTag').textContent = L.day_type;
+    $('basisLine').textContent =
+      `Basis ${L.basis_date} · H ${L.basis_high.toFixed(2)} · L ${L.basis_low.toFixed(2)} · `+
+      `C ${L.basis_close.toFixed(2)} · range ${L.range_pct}% · CPR ${L.cpr_pct}%`;
+    const body = $('lvTbl').querySelector('tbody'); body.innerHTML='';
+    const rows = [...[...L.resistances].reverse(), ...(L.at_zone?[L.at_zone]:[]), ...L.supports];
+    rows.forEach(z=>{
+      const cls = z.label[0]==='R'?'R':(z.label[0]==='S'?'S':'AT');
+      const rate = rateByStar[String(z.stars)] || {};
+      body.innerHTML += `<tr class="row${cls}"><td class="${cls}">${z.label}</td>
+        <td><b>${Math.round(z.key).toLocaleString()}</b></td>
+        <td>${Math.round(z.lo).toLocaleString()} - ${Math.round(z.hi).toLocaleString()}</td>
+        <td class="${cls}">${stars(z.stars)}</td><td>${z.key_name}</td>
+        <td>${rate.touch_pct??'-'}%</td><td>${rate.hold_pct??'-'}%</td></tr>`;
+    });
+    $('lvNote').textContent = L.disclaimer;
+  }catch(e){ $('basisLine').textContent = 'No levels yet - ingest data first.'; }
+
+  try{
+    const d = await j('/api/stats/days');
+    const g = $('gapTbl').querySelector('tbody'); g.innerHTML='';
+    (d.gap_fill||[]).forEach(r=>{
+      g.innerHTML += `<tr><td>${r.bucket}</td><td>${r.n}</td><td><b>${r.fill_pct}</b></td><td>${r.trend_pct}</td></tr>`;
+    });
+    const t = $('dtTbl').querySelector('tbody'); t.innerHTML='';
+    (d.day_type||[]).forEach(r=>{
+      t.innerHTML += `<tr><td>${r.group}</td><td>${r.n}</td><td>${r.trend_pct}</td><td>${r.fill_pct}</td><td>${r.up_pct}</td></tr>`;
+    });
+    if(d.first_date) $('sub').textContent =
+      `Next-session support and resistance, with base rates from ${d.n} sessions (${d.first_date} to ${d.last_date}).`;
+  }catch(e){}
+
+  try{
+    const s = await j('/api/sessions?limit=12');
+    const b = $('sesTbl').querySelector('tbody'); b.innerHTML='';
+    s.forEach(r=>{
+      b.innerHTML += `<tr><td>${String(r.date).slice(0,10)}</td><td>${r.day_type}</td>
+        <td>${(r.gap_pct??0).toFixed(2)}</td><td>${r.open_pos}</td>
+        <td>${r.touched}/${r.held}/${r.broke}</td></tr>`;
+    });
+  }catch(e){}
+
+  try{
+    const h2 = await j('/api/health');
+    $('hBroker').textContent = h2.broker;
+  }catch(e){}
+}
+
+async function uploadCsv(){
+  const f = $('csvFile').files[0];
+  if(!f){ $('msg').textContent = 'Choose a CSV file first.'; return; }
+  $('msg').textContent = 'Uploading...';
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch('/api/ingest/csv', {method:'POST', headers:{'X-API-Key':key()}, body:fd})
+    .then(x=>x.json());
+  $('msg').textContent = r.ok ? `Ingested ${r.bars_ingested} bars, scored ${r.sessions_scored} sessions.`
+                              : (r.detail || JSON.stringify(r));
+  loadAll();
+}
+loadAll();
+</script>
+</body></html>

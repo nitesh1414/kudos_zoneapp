@@ -1,0 +1,17 @@
+# crontab -u zoneapp -e
+# IST server assumed. Adjust if the VPS runs UTC (subtract 5:30).
+
+# End-of-day job at 16:05 IST on weekdays: rescore today, build tomorrow's zones.
+5 16 * * 1-5 curl -fsS -X POST http://127.0.0.1:8000/api/jobs/eod -H "X-API-Key: $ZONEAPP_API_KEY" >> /opt/zoneapp/data/eod.log 2>&1
+
+# Health check, right after the EOD job (DEVELOPER_BIBLE.md SS10.3). Exits
+# non-zero on any issue, which cron will email if MAILTO is set.
+10 16 * * 1-5 /opt/zoneapp/venv/bin/python /opt/zoneapp/scripts/health_check.py >> /opt/zoneapp/data/health.log 2>&1
+
+# NOTE: this does NOT fetch data. Broker tokens typically expire daily and the
+# login step is interactive, so the sync has to be triggered from the
+# dashboard after logging in. If you later move to a broker/vendor with
+# non-expiring API keys, add a fetch call here before the eod job.
+
+# Weekly database backup, keep 8 weeks
+0 20 * * 6 cp /opt/zoneapp/data/zoneapp.duckdb /opt/zoneapp/backups/zoneapp-$(date +\%Y\%m\%d).duckdb && find /opt/zoneapp/backups -name '*.duckdb' -mtime +56 -delete
