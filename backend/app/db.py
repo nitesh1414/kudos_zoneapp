@@ -15,10 +15,11 @@ from psycopg.rows import dict_row
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS intraday_bars (
-    symbol TEXT NOT NULL, ts TIMESTAMP NOT NULL, d DATE NOT NULL,
+    symbol TEXT NOT NULL, resolution TEXT NOT NULL DEFAULT '15',
+    ts TIMESTAMP NOT NULL, d DATE NOT NULL,
     o DOUBLE PRECISION, h DOUBLE PRECISION, l DOUBLE PRECISION,
     c DOUBLE PRECISION, v DOUBLE PRECISION, source TEXT,
-    PRIMARY KEY (symbol, ts)
+    PRIMARY KEY (symbol, resolution, ts)
 );
 CREATE TABLE IF NOT EXISTS zone_sheets (
     symbol TEXT NOT NULL, basis_date DATE NOT NULL, target_date DATE,
@@ -52,6 +53,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS broker_connections (
     id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, broker_type TEXT NOT NULL,
     credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
+    resolutions JSONB NOT NULL DEFAULT '["15","D"]'::jsonb,
+    token_updated_at TIMESTAMPTZ, token_expires_at TIMESTAMPTZ,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -73,10 +76,10 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_symbol_date ON zone_outcomes(symbol,targ
 """
 
 DAILY_SQL = """
-SELECT symbol, d,
+SELECT symbol, resolution, d,
  (array_agg(o ORDER BY ts))[1] AS o, max(h) AS h, min(l) AS l,
  (array_agg(c ORDER BY ts DESC))[1] AS c, sum(v) AS v, count(*) AS n_bars
-FROM intraday_bars GROUP BY symbol,d
+FROM intraday_bars GROUP BY symbol,resolution,d
 """
 
 
@@ -95,6 +98,17 @@ class Store:
     def _init_schema(self):
         with self.connection() as con:
             con.execute(SCHEMA)
+            # Forward migrations for installations created before multi-timeframe
+            # storage and daily broker-token reminders were introduced.
+            con.execute("ALTER TABLE intraday_bars ADD COLUMN IF NOT EXISTS resolution TEXT NOT NULL DEFAULT '15'")
+            con.execute("ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS resolutions JSONB NOT NULL DEFAULT '[\"15\",\"D\"]'::jsonb")
+            con.execute("ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS token_updated_at TIMESTAMPTZ")
+            con.execute("ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_bars_symbol_resolution_date ON intraday_bars(symbol,resolution,d)")
+            pkey = con.execute("SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='intraday_bars'::regclass AND contype='p'").fetchone()
+            if pkey and "resolution" not in pkey["definition"]:
+                con.execute("ALTER TABLE intraday_bars DROP CONSTRAINT intraday_bars_pkey")
+                con.execute("ALTER TABLE intraday_bars ADD PRIMARY KEY(symbol,resolution,ts)")
             # Extension creation may be restricted on managed PostgreSQL. In that
             # case the schema still works as ordinary PostgreSQL.
             try:
@@ -131,29 +145,32 @@ class Store:
         with self.connection() as con:
             con.execute("INSERT INTO kv(k,v) VALUES (%s,%s::jsonb) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [key, json.dumps(value)])
 
-    def upsert_bars(self, df, symbol: str, source: str):
+    def upsert_bars(self, df, symbol: str, source: str, resolution: str = "15"):
         if df is None or df.empty:
             return 0
         d = df.copy()
         if "v" not in d: d["v"] = 0.0
-        rows = [(symbol, r.ts.to_pydatetime(), r.ts.date(), float(r.o), float(r.h),
+        rows = [(symbol, str(resolution), r.ts.to_pydatetime(), r.ts.date(), float(r.o), float(r.h),
                  float(r.l), float(r.c), float(r.v or 0), source) for r in d.itertuples()]
-        sql = """INSERT INTO intraday_bars(symbol,ts,d,o,h,l,c,v,source)
-                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                 ON CONFLICT(symbol,ts) DO UPDATE SET d=excluded.d,o=excluded.o,h=excluded.h,
+        sql = """INSERT INTO intraday_bars(symbol,resolution,ts,d,o,h,l,c,v,source)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 ON CONFLICT(symbol,resolution,ts) DO UPDATE SET d=excluded.d,o=excluded.o,h=excluded.h,
                  l=excluded.l,c=excluded.c,v=excluded.v,source=excluded.source"""
         with self.connection() as con:
             with con.cursor() as cur: cur.executemany(sql, rows)
         return len(rows)
 
-    def daily(self, symbol, min_bars=20):
-        return self.q(f"SELECT * FROM ({DAILY_SQL}) t WHERE symbol=? AND n_bars>=? ORDER BY d", [symbol,min_bars])
+    def daily(self, symbol, min_bars=20, resolution="15"):
+        return self.q(f"SELECT * FROM ({DAILY_SQL}) t WHERE symbol=? AND resolution=? AND n_bars>=? ORDER BY d", [symbol,resolution,min_bars])
 
     def last_complete_day(self, symbol, min_bars=20):
         df=self.daily(symbol,min_bars); return None if df.empty else df.iloc[-1]
 
-    def bars_for_day(self, symbol, d):
-        return self.q("SELECT ts,o,h,l,c FROM intraday_bars WHERE symbol=? AND d=? ORDER BY ts", [symbol,d])
+    def bars_for_day(self, symbol, d, resolution="15"):
+        return self.q("SELECT ts,o,h,l,c FROM intraday_bars WHERE symbol=? AND resolution=? AND d=? ORDER BY ts", [symbol,resolution,d])
+
+    def recent_bars(self, symbol, resolution="15", limit=500):
+        return self.q("SELECT ts,o,h,l,c,v FROM intraday_bars WHERE symbol=? AND resolution=? ORDER BY ts DESC LIMIT ?", [symbol,resolution,limit]).sort_values("ts")
 
     def save_sheet(self, symbol, sheet, target_date, params_hash):
         zones=list(sheet.resistances)+list(sheet.supports)+([sheet.at_zone] if sheet.at_zone else [])

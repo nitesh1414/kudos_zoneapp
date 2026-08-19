@@ -32,13 +32,22 @@ Open <http://localhost:8000>. The local compose credentials are:
 - password: `local-admin-password`
 
 Change every example secret before deployment. Docker Compose starts
-TimescaleDB/PostgreSQL and the API. For a non-Docker install, copy
-`backend/.env.example`, export its values, install
-`backend/requirements.txt`, and run:
+TimescaleDB/PostgreSQL and the API. Docker is optional. For a non-Docker install, install PostgreSQL 16 (and the
+TimescaleDB extension when available), create the database, copy
+`backend/.env.example` to `backend/.env`, and set `DATABASE_URL` and the other
+secrets. Then run:
 
 ```bash
+bash start_local.sh --no-docker
+# or manually:
+python -m venv .venv
+. .venv/bin/activate
+pip install -r backend/requirements.txt
 uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
+
+The application reads `backend/.env` itself; it does not require Docker or
+machine-level environment configuration.
 
 ## Administrator workflow
 
@@ -48,6 +57,15 @@ uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
    symbol in that provider's symbol format.
 4. The client signs in through the same login page and is redirected to the
    separate `/app` result view. A client can only query their assigned symbol.
+
+The symbol picker searches Fyers' complete Indian symbol masters for NSE cash
+and indices, NSE derivatives/currency, BSE cash/derivatives, and MCX
+commodities. Exact provider symbols can also be entered, so the application is
+not limited to the original NIFTY aliases. Connections can retain every Fyers
+candle resolution (`1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 120, 180, 240, D`).
+The historical backfill API chunks long date ranges according to provider
+limits and stores each timeframe independently. Zone results deliberately use
+completed 15-minute candles.
 
 Broker credentials are Fernet-encrypted in PostgreSQL. Keep
 `ZONEAPP_ENCRYPTION_KEY` stable and outside source control.
@@ -77,6 +95,15 @@ Friday**. The worker:
 Runs are recorded in `job_runs` and are idempotent per date, broker and symbol.
 The administrator can manually run or force the job from the UI. Add exchange
 holidays to `market_holidays` as part of annual operations.
+
+All trading decisions use `Asia/Kolkata` through Python `zoneinfo`, PostgreSQL
+absolute timestamps, and `CRON_TZ=Asia/Kolkata`; they do not depend on the
+server or machine timezone.
+
+Fyers connections track their 24-hour token lifetime. Admin and assigned
+client dashboards show missing, expiring (within three hours), and expired
+notifications. Either the admin or assigned client can paste the daily token;
+it is validated and immediately re-encrypted in PostgreSQL.
 
 ## Security notes
 

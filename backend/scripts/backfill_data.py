@@ -121,7 +121,7 @@ def run_backfill():
     # 2. Ingest into PostgreSQL/TimescaleDB
     print("\n[2/3] Writing to PostgreSQL/TimescaleDB...")
     store = Store(DATABASE_URL)
-    n_upserted = store.upsert_bars(df, args.symbol, "fyers")
+    n_upserted = store.upsert_bars(df, args.symbol, "fyers", args.resolution)
     print(f"[OK] Upserted {n_upserted:,} bars into database.")
 
     # 3. Recalculate EOD Zone Statistics

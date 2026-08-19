@@ -19,6 +19,7 @@ def is_market_day(store, day):
 
 def run_market_close(store, params: ZoneParams | None = None, now=None, force=False):
     now = now or datetime.now(IST)
+    now = now.replace(tzinfo=IST) if now.tzinfo is None else now.astimezone(IST)
     day = now.date()
     working, reason = is_market_day(store, day)
     if not working and not force:
@@ -26,7 +27,7 @@ def run_market_close(store, params: ZoneParams | None = None, now=None, force=Fa
     if now.hour < 16 and not force:
         return {"ok": True, "skipped": True, "reason": "Market has not closed", "date": str(day), "runs": []}
 
-    assignments = store.q("""SELECT DISTINCT b.id broker_id,b.broker_type,b.credentials,u.symbol
+    assignments = store.q("""SELECT DISTINCT b.id broker_id,b.broker_type,b.credentials,b.resolutions,b.token_expires_at,u.symbol
         FROM broker_connections b JOIN client_brokers cb ON cb.broker_id=b.id
         JOIN users u ON u.id=cb.user_id
         WHERE b.enabled=true AND u.active=true""")
@@ -39,12 +40,23 @@ def run_market_close(store, params: ZoneParams | None = None, now=None, force=Fa
         store.exec("""INSERT INTO job_runs(job_date,broker_id,symbol,status) VALUES (?,?,?,'running')
             ON CONFLICT(job_date,broker_id,symbol) DO UPDATE SET status='running',started_at=now(),finished_at=NULL""", [day,row["broker_id"],row["symbol"]])
         try:
+            expiry=row.get("token_expires_at")
+            if expiry and expiry <= now.astimezone(expiry.tzinfo):
+                raise RuntimeError("Broker access token has expired; add today's token")
             adapter = make_broker(row["broker_type"], decrypt_credentials(row["credentials"]))
             start = (day - timedelta(days=10)).isoformat()
-            bars = adapter.fetch_historical(row["symbol"], "15", start, day.isoformat())
-            count = store.upsert_bars(bars, row["symbol"], row["broker_type"])
+            resolutions=row.get("resolutions") or ["15","D"]
+            ingested, warnings={}, {}
+            for resolution in resolutions:
+                try:
+                    bars = adapter.fetch_historical(row["symbol"], resolution, start, day.isoformat())
+                    ingested[str(resolution)] = store.upsert_bars(bars, row["symbol"], row["broker_type"], str(resolution))
+                except Exception as exc:
+                    warnings[str(resolution)] = str(exc)
+            if "15" not in ingested:
+                raise RuntimeError(f"Required 15-minute candle sync failed: {warnings.get('15','not configured')}")
             result = run_eod(store, row["symbol"], params or ZoneParams(), rebuild_all=False)
-            detail = {"bars_ingested": count, **result}
+            detail = {"bars_ingested": sum(ingested.values()), "by_resolution": ingested, "timeframe_warnings": warnings, **result}
             status = "success" if result.get("ok") else "failed"
         except Exception as exc:
             status, detail = "failed", {"error": str(exc)}

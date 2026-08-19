@@ -16,7 +16,10 @@ class BrokerType:
     label: str
     adapter: type[BrokerAdapter]
     fields: tuple[dict, ...]
+    token_ttl_hours: int | None = None
 
+
+INDIA_CANDLE_RESOLUTIONS = ("1", "2", "3", "5", "10", "15", "20", "30", "45", "60", "120", "180", "240", "D")
 
 _TYPES: dict[str, BrokerType] = {}
 
@@ -26,7 +29,15 @@ def register(item: BrokerType):
 
 
 def broker_types():
-    return [{"key": x.key, "label": x.label, "fields": list(x.fields)} for x in _TYPES.values()]
+    return [{"key": x.key, "label": x.label, "fields": list(x.fields),
+             "token_ttl_hours": x.token_ttl_hours,
+             "resolutions": list(INDIA_CANDLE_RESOLUTIONS)} for x in _TYPES.values()]
+
+
+def get_broker_type(kind: str) -> BrokerType:
+    if kind not in _TYPES:
+        raise ValueError(f"Unsupported broker type: {kind}")
+    return _TYPES[kind]
 
 
 def make_broker(kind: str, credentials: dict) -> BrokerAdapter:
@@ -41,4 +52,5 @@ register(BrokerType(
         {"name": "client_id", "label": "App / Client ID", "secret": False},
         {"name": "access_token", "label": "Access token", "secret": True},
     ),
+    token_ttl_hours=24,
 ))

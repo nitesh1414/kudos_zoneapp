@@ -1,20 +1,25 @@
 """ZoneApp multi-tenant FastAPI application."""
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .auth import (COOKIE_NAME, create_session, decrypt_credentials, delete_session,
                    encrypt_credentials, hash_password, session_user, verify_password)
 from .brokers.base import BrokerError
 from .brokers.csv_adapter import CSVAdapter
-from .brokers.registry import broker_types, make_broker
+from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker_type, make_broker
 from .db import Store
+from .instruments import SOURCES, search_instruments
 from .jobs import run_market_close
 from .service import ZoneParams, next_session_sheet, recent_sessions, run_eod, stats_days, stats_zones
 
@@ -76,6 +81,14 @@ class ClientPatch(BaseModel):
 class BrokerIn(BaseModel):
     name: str = Field(min_length=1,max_length=120); broker_type: str
     credentials: dict; enabled: bool=True
+    resolutions: list[str] = Field(default_factory=lambda: list(INDIA_CANDLE_RESOLUTIONS))
+class BrokerTokenIn(BaseModel):
+    access_token: str = Field(min_length=10)
+class BackfillIn(BaseModel):
+    symbol: str
+    date_from: str = "2010-01-01"
+    date_to: str | None = None
+    resolutions: list[str] | None = None
 class HolidayIn(BaseModel):
     holiday_date: str
     label: str = "Market holiday"
@@ -147,15 +160,44 @@ def update_client(user_id:int,body:ClientPatch,_=Depends(admin_user)):
 def types(_=Depends(admin_user)): return broker_types()
 @app.get("/api/admin/brokers")
 def brokers(_=Depends(admin_user)):
-    return store.q("SELECT id,name,broker_type,enabled,created_at,updated_at FROM broker_connections ORDER BY id").to_dict("records")
+    return store.q("""SELECT id,name,broker_type,resolutions,enabled,created_at,updated_at,
+        token_updated_at,token_expires_at,
+        CASE WHEN token_expires_at IS NULL THEN 'unknown' WHEN token_expires_at<=now() THEN 'expired'
+             WHEN token_expires_at<=now()+interval '3 hours' THEN 'expiring' ELSE 'valid' END token_status
+        FROM broker_connections ORDER BY id""").to_dict("records")
 @app.post("/api/admin/brokers")
 def add_broker(body:BrokerIn,_=Depends(admin_user)):
     spec=next((x for x in broker_types() if x["key"]==body.broker_type),None)
     if not spec: raise HTTPException(400,"Unsupported broker type")
     required={f["name"] for f in spec["fields"]}
     if not required.issubset(body.credentials): raise HTTPException(400,f"Missing credentials: {', '.join(sorted(required-set(body.credentials)))}")
-    row=store.one("INSERT INTO broker_connections(name,broker_type,credentials,enabled) VALUES (?,?,?::jsonb,?) RETURNING id",[body.name,body.broker_type,json.dumps(encrypt_credentials(body.credentials)),body.enabled])
+    selected=[r for r in dict.fromkeys(body.resolutions) if r in INDIA_CANDLE_RESOLUTIONS]
+    if "15" not in selected: selected.append("15")  # zone engine's canonical timeframe
+    broker_type=get_broker_type(body.broker_type)
+    auth=make_broker(body.broker_type,body.credentials).auth_status()
+    if not auth.connected: raise HTTPException(400,f"Broker was not saved: {auth.message}")
+    now=datetime.now(timezone.utc)
+    expiry=now+timedelta(hours=broker_type.token_ttl_hours) if broker_type.token_ttl_hours and body.credentials.get("access_token") else None
+    row=store.one("""INSERT INTO broker_connections(name,broker_type,credentials,resolutions,token_updated_at,token_expires_at,enabled)
+        VALUES (?,?,?::jsonb,?::jsonb,?,?,?) RETURNING id""",
+        [body.name,body.broker_type,json.dumps(encrypt_credentials(body.credentials)),json.dumps(selected),now if expiry else None,expiry,body.enabled])
     return {"ok":True,"id":row["id"]}
+@app.post("/api/brokers/{broker_id}/token")
+def update_broker_token(broker_id:int,body:BrokerTokenIn,user=Depends(current_user)):
+    row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
+    if not row: raise HTTPException(404,"Broker not found")
+    if user["role"] != "admin" and not store.one("SELECT 1 ok FROM client_brokers WHERE user_id=? AND broker_id=?",[user["id"],broker_id]):
+        raise HTTPException(403,"This broker is not assigned to your account")
+    credentials=decrypt_credentials(row["credentials"])
+    credentials["access_token"]=body.access_token.strip()
+    status=make_broker(row["broker_type"],credentials).auth_status()
+    if not status.connected: raise HTTPException(400,f"Token was not saved: {status.message}")
+    kind=get_broker_type(row["broker_type"]); now=datetime.now(timezone.utc)
+    expires=now+timedelta(hours=kind.token_ttl_hours) if kind.token_ttl_hours else None
+    store.exec("UPDATE broker_connections SET credentials=?::jsonb,token_updated_at=?,token_expires_at=?,updated_at=now() WHERE id=?",
+               [json.dumps(encrypt_credentials(credentials)),now,expires,broker_id])
+    return {"ok":True,"connected":True,"message":status.message,"expires_at":expires}
+
 @app.delete("/api/admin/brokers/{broker_id}")
 def delete_broker(broker_id:int,_=Depends(admin_user)):
     store.exec("DELETE FROM broker_connections WHERE id=?",[broker_id]); return {"ok":True}
@@ -168,17 +210,62 @@ def test_broker(broker_id:int,_=Depends(admin_user)):
         return {"connected":status.connected,"message":status.message}
     except Exception as exc: return {"connected":False,"message":str(exc)}
 
+@app.post("/api/admin/brokers/{broker_id}/backfill")
+def backfill_broker(broker_id:int,body:BackfillIn,_=Depends(admin_user)):
+    row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
+    if not row: raise HTTPException(404,"Broker not found")
+    try:
+        datetime.strptime(body.date_from,"%Y-%m-%d")
+        date_to=body.date_to or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        datetime.strptime(date_to,"%Y-%m-%d")
+    except ValueError: raise HTTPException(400,"Dates must be YYYY-MM-DD")
+    resolutions=body.resolutions or row["resolutions"]
+    if any(r not in INDIA_CANDLE_RESOLUTIONS for r in resolutions): raise HTTPException(400,"Unsupported resolution")
+    adapter=make_broker(row["broker_type"],decrypt_credentials(row["credentials"])); counts={}
+    try:
+        for resolution in resolutions:
+            frame=adapter.fetch_historical(body.symbol,resolution,body.date_from,date_to)
+            counts[resolution]=store.upsert_bars(frame,body.symbol,row["broker_type"],resolution)
+    except BrokerError as exc: raise HTTPException(400,str(exc))
+    result=run_eod(store,body.symbol,params(),rebuild_all=True) if "15" in resolutions else {"ok":True,"message":"Candles stored; 15-minute data is required for zone results"}
+    return {"ok":True,"symbol":body.symbol,"by_resolution":counts,**result}
+
 
 # Client result APIs; symbol always comes from the authenticated account.
+@app.get("/api/my/broker")
+def my_broker(user=Depends(current_user)):
+    row=store.one("""SELECT b.id,b.name,b.broker_type,b.enabled,b.token_updated_at,b.token_expires_at
+        FROM client_brokers cb JOIN broker_connections b ON b.id=cb.broker_id WHERE cb.user_id=?""",[user["id"]])
+    if not row: return {"assigned":False,"token_status":"missing","notification":"No broker is assigned. Contact your administrator."}
+    now=datetime.now(timezone.utc); expiry=row["token_expires_at"]
+    if not expiry: status,message="missing","Add today's broker access token before market data can be updated."
+    elif expiry<=now: status,message="expired","Broker token has expired. Add a new token now to keep market data running."
+    elif expiry<=now+timedelta(hours=3): status,message="expiring","Broker token expires soon. Add the next token to avoid interruption."
+    else: status,message="valid",f"Broker token is active until {expiry.astimezone(ZoneInfo('Asia/Kolkata')).strftime('%d %b, %I:%M %p IST')}."
+    return {"assigned":True,**dict(row),"token_status":status,"notification":message}
+
+@app.get("/api/instruments")
+def instruments(q:str="",segment:str|None=None,limit:int=100,_=Depends(current_user)):
+    return {"items":search_instruments(q,segment,min(max(limit,1),200)),"segments":list(SOURCES)}
+
+@app.get("/api/candles")
+def candles(resolution:str="15",limit:int=500,user=Depends(current_user)):
+    if resolution not in INDIA_CANDLE_RESOLUTIONS: raise HTTPException(400,"Unsupported resolution")
+    return store.recent_bars(user["symbol"],resolution,min(max(limit,1),5000)).to_dict("records")
+
 @app.get("/api/health")
 def health(user=Depends(current_user)):
     symbol=user["symbol"]; c=store.counts(symbol)
-    return {"ok":True,"symbol":symbol,**c,"server_time":datetime.now().isoformat(timespec="seconds")}
+    return {"ok":True,"symbol":symbol,**c,"server_time":datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")}
 @app.get("/api/levels/next")
 def levels_next(user=Depends(current_user)):
     sheet=next_session_sheet(store,user["symbol"],params())
     if sheet is None: raise HTTPException(404,"No complete session available")
-    result=sheet.dict(); result["disclaimer"]="Reference map from the last completed session; not a trade signal or forecast."; return result
+    result=sheet.dict()
+    for zone in result["resistances"]+result["supports"]+([result["at_zone"]] if result.get("at_zone") else []):
+        zone.pop("stars",None)
+    result["disclaimer"]="Reference map from the last completed session; not a trade signal or forecast."
+    return result
 @app.get("/api/stats/zones")
 def zone_stats(user=Depends(current_user)): return stats_zones(store,user["symbol"])
 @app.get("/api/stats/days")
