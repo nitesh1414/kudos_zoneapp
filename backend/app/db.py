@@ -1,213 +1,180 @@
+"""PostgreSQL/TimescaleDB persistence for ZoneApp.
+
+PostgreSQL stores users, broker connections and computed results.  When the
+TimescaleDB extension is installed, ``intraday_bars`` is converted to a
+hypertable. The application remains usable on plain PostgreSQL as well.
 """
-db.py - DuckDB storage.
-
-DuckDB is a single file on disk. No server, no daemon, nothing to babysit
-on the VPS. Back it up by copying the file.
-
-TABLES
-  intraday_bars   raw OHLC bars, one row per bar        (source of truth)
-  daily           derived daily OHLC                    (view over bars)
-  zone_sheets     computed zones, one row per zone      (basis -> target date)
-  zone_outcomes   what each zone did on its target date
-  kv              small key/value store (broker tokens, settings)
-
-Everything downstream (stats, base rates, the dashboard) is derived from
-these. Delete zone_sheets/zone_outcomes and rebuild any time - the bars are
-the only thing you cannot regenerate.
-"""
-import os
 import json
-import threading
-from datetime import date
-from typing import Optional
+import os
+import re
+from contextlib import contextmanager
 
-import duckdb
-
-_LOCK = threading.Lock()
+import pandas as pd
+import psycopg
+from psycopg.rows import dict_row
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS intraday_bars (
-    symbol   VARCHAR NOT NULL,
-    ts       TIMESTAMP NOT NULL,
-    d        DATE NOT NULL,
-    o DOUBLE, h DOUBLE, l DOUBLE, c DOUBLE, v DOUBLE,
-    source   VARCHAR,
+    symbol TEXT NOT NULL, ts TIMESTAMP NOT NULL, d DATE NOT NULL,
+    o DOUBLE PRECISION, h DOUBLE PRECISION, l DOUBLE PRECISION,
+    c DOUBLE PRECISION, v DOUBLE PRECISION, source TEXT,
     PRIMARY KEY (symbol, ts)
 );
-
 CREATE TABLE IF NOT EXISTS zone_sheets (
-    symbol      VARCHAR NOT NULL,
-    basis_date  DATE NOT NULL,
-    target_date DATE,
-    label       VARCHAR NOT NULL,
-    lo DOUBLE, hi DOUBLE, key_px DOUBLE,
-    key_name    VARCHAR,
-    stars       INTEGER,
-    weight      DOUBLE,
-    members     VARCHAR,
-    day_type    VARCHAR,
-    cpr_pct     DOUBLE,
-    range_pct   DOUBLE,
-    params_hash VARCHAR,
-    created_at  TIMESTAMP DEFAULT now(),
-    PRIMARY KEY (symbol, basis_date, label)
+    symbol TEXT NOT NULL, basis_date DATE NOT NULL, target_date DATE,
+    label TEXT NOT NULL, lo DOUBLE PRECISION, hi DOUBLE PRECISION,
+    key_px DOUBLE PRECISION, key_name TEXT, stars INTEGER,
+    weight DOUBLE PRECISION, members TEXT, day_type TEXT,
+    cpr_pct DOUBLE PRECISION, range_pct DOUBLE PRECISION, params_hash TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(), PRIMARY KEY (symbol,basis_date,label)
 );
-
 CREATE TABLE IF NOT EXISTS zone_outcomes (
-    symbol       VARCHAR NOT NULL,
-    target_date  DATE NOT NULL,
-    label        VARCHAR NOT NULL,
-    stars        INTEGER,
-    key_px       DOUBLE,
-    key_name     VARCHAR,
-    lo DOUBLE, hi DOUBLE,
-    touched BOOLEAN, bounced BOOLEAN, broke BOOLEAN, held BOOLEAN,
-    opened_inside BOOLEAN,
-    day_type     VARCHAR,
-    gap_pct      DOUBLE,
-    open_pos     VARCHAR,
-    PRIMARY KEY (symbol, target_date, label)
+    symbol TEXT NOT NULL, target_date DATE NOT NULL, label TEXT NOT NULL,
+    stars INTEGER, key_px DOUBLE PRECISION, key_name TEXT,
+    lo DOUBLE PRECISION, hi DOUBLE PRECISION, touched BOOLEAN,
+    bounced BOOLEAN, broke BOOLEAN, held BOOLEAN, opened_inside BOOLEAN,
+    day_type TEXT, gap_pct DOUBLE PRECISION, open_pos TEXT,
+    PRIMARY KEY (symbol,target_date,label)
 );
-
-CREATE TABLE IF NOT EXISTS kv (
-    k VARCHAR PRIMARY KEY,
-    v VARCHAR
+CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v JSONB);
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+    display_name TEXT NOT NULL, password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin','client')),
+    symbol TEXT NOT NULL DEFAULT 'NSE:NIFTY50-INDEX',
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS broker_connections (
+    id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, broker_type TEXT NOT NULL,
+    credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS client_brokers (
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    broker_id BIGINT REFERENCES broker_connections(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS market_holidays (
+    holiday_date DATE PRIMARY KEY, label TEXT NOT NULL DEFAULT 'Market holiday'
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+    id BIGSERIAL PRIMARY KEY, job_date DATE NOT NULL, broker_id BIGINT,
+    symbol TEXT NOT NULL, status TEXT NOT NULL, detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(), finished_at TIMESTAMPTZ,
+    UNIQUE(job_date,broker_id,symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_bars_symbol_date ON intraday_bars(symbol,d);
+CREATE INDEX IF NOT EXISTS idx_outcomes_symbol_date ON zone_outcomes(symbol,target_date);
 """
 
 DAILY_SQL = """
 SELECT symbol, d,
-       first(o ORDER BY ts) AS o,
-       max(h) AS h, min(l) AS l,
-       last(c ORDER BY ts) AS c,
-       sum(v) AS v,
-       count(*) AS n_bars
-FROM intraday_bars
-GROUP BY symbol, d
+ (array_agg(o ORDER BY ts))[1] AS o, max(h) AS h, min(l) AS l,
+ (array_agg(c ORDER BY ts DESC))[1] AS c, sum(v) AS v, count(*) AS n_bars
+FROM intraday_bars GROUP BY symbol,d
 """
 
 
 class Store:
-    def __init__(self, path: str):
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        self.path = path
-        self._con = duckdb.connect(path)
-        self._con.execute(SCHEMA)
+    def __init__(self, dsn: str | None = None):
+        self.dsn = dsn or os.getenv("DATABASE_URL")
+        if not self.dsn or not self.dsn.startswith(("postgresql://", "postgres://")):
+            raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
+        self._init_schema()
 
-    # ---------- low level ----------
+    @contextmanager
+    def connection(self):
+        with psycopg.connect(self.dsn, row_factory=dict_row) as con:
+            yield con
+
+    def _init_schema(self):
+        with self.connection() as con:
+            con.execute(SCHEMA)
+            # Extension creation may be restricted on managed PostgreSQL. In that
+            # case the schema still works as ordinary PostgreSQL.
+            try:
+                con.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
+                con.execute("SELECT create_hypertable('intraday_bars','ts',if_not_exists => TRUE, migrate_data => TRUE)")
+            except Exception:
+                con.rollback()
+                con.execute(SCHEMA)
+
+    @staticmethod
+    def _sql(sql):
+        # Existing service queries use DB-API qmark placeholders.
+        return re.sub(r"\?", "%s", sql)
+
     def q(self, sql, params=None):
-        with _LOCK:
-            return self._con.execute(sql, params or []).fetchdf()
+        with self.connection() as con:
+            cur = con.execute(self._sql(sql), params or [])
+            rows = cur.fetchall()
+            return pd.DataFrame(rows, columns=[d.name for d in cur.description])
 
     def exec(self, sql, params=None):
-        with _LOCK:
-            self._con.execute(sql, params or [])
+        with self.connection() as con:
+            con.execute(self._sql(sql), params or [])
 
-    # ---------- kv ----------
+    def one(self, sql, params=None):
+        with self.connection() as con:
+            return con.execute(self._sql(sql), params or []).fetchone()
+
     def kv_get(self, key, default=None):
-        df = self.q("SELECT v FROM kv WHERE k = ?", [key])
-        if df.empty:
-            return default
-        try:
-            return json.loads(df.v.iloc[0])
-        except Exception:
-            return df.v.iloc[0]
+        row = self.one("SELECT v FROM kv WHERE k=?", [key])
+        return default if not row else row["v"]
 
     def kv_set(self, key, value):
-        self.exec("INSERT OR REPLACE INTO kv VALUES (?, ?)", [key, json.dumps(value)])
+        with self.connection() as con:
+            con.execute("INSERT INTO kv(k,v) VALUES (%s,%s::jsonb) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [key, json.dumps(value)])
 
-    # ---------- bars ----------
     def upsert_bars(self, df, symbol: str, source: str):
-        """df needs columns ts, o, h, l, c and optionally v."""
         if df is None or df.empty:
             return 0
         d = df.copy()
-        if 'v' not in d.columns:
-            d['v'] = 0.0
-        d['symbol'] = symbol
-        d['source'] = source
-        d['d'] = d['ts'].dt.date
-        d = d[['symbol', 'ts', 'd', 'o', 'h', 'l', 'c', 'v', 'source']]
-        with _LOCK:
-            self._con.register('incoming', d)
-            self._con.execute("""
-    DELETE FROM intraday_bars
-    WHERE EXISTS (
-        SELECT 1 
-        FROM incoming 
-        WHERE incoming.symbol = intraday_bars.symbol 
-          AND incoming.ts = intraday_bars.ts
-    )
-""")
-            self._con.execute("INSERT INTO intraday_bars SELECT * FROM incoming")
-            self._con.unregister('incoming')
-        return len(d)
+        if "v" not in d: d["v"] = 0.0
+        rows = [(symbol, r.ts.to_pydatetime(), r.ts.date(), float(r.o), float(r.h),
+                 float(r.l), float(r.c), float(r.v or 0), source) for r in d.itertuples()]
+        sql = """INSERT INTO intraday_bars(symbol,ts,d,o,h,l,c,v,source)
+                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                 ON CONFLICT(symbol,ts) DO UPDATE SET d=excluded.d,o=excluded.o,h=excluded.h,
+                 l=excluded.l,c=excluded.c,v=excluded.v,source=excluded.source"""
+        with self.connection() as con:
+            with con.cursor() as cur: cur.executemany(sql, rows)
+        return len(rows)
 
-    def daily(self, symbol: str, min_bars: int = 20):
-        return self.q(f"""
-            SELECT * FROM ({DAILY_SQL}) t
-            WHERE symbol = ? AND n_bars >= ?
-            ORDER BY d
-        """, [symbol, min_bars])
+    def daily(self, symbol, min_bars=20):
+        return self.q(f"SELECT * FROM ({DAILY_SQL}) t WHERE symbol=? AND n_bars>=? ORDER BY d", [symbol,min_bars])
 
-    def last_complete_day(self, symbol: str, min_bars: int = 20):
-        df = self.daily(symbol, min_bars)
-        return None if df.empty else df.iloc[-1]
+    def last_complete_day(self, symbol, min_bars=20):
+        df=self.daily(symbol,min_bars); return None if df.empty else df.iloc[-1]
 
-    def bars_for_day(self, symbol: str, d):
-        return self.q("""
-            SELECT ts, o, h, l, c FROM intraday_bars
-            WHERE symbol = ? AND d = ? ORDER BY ts
-        """, [symbol, d])
+    def bars_for_day(self, symbol, d):
+        return self.q("SELECT ts,o,h,l,c FROM intraday_bars WHERE symbol=? AND d=? ORDER BY ts", [symbol,d])
 
-    # ---------- zone sheets ----------
     def save_sheet(self, symbol, sheet, target_date, params_hash):
-        rows = []
-        zones = list(sheet.resistances) + list(sheet.supports)
-        if sheet.at_zone:
-            zones.append(sheet.at_zone)
-        for z in zones:
-            rows.append((symbol, sheet.basis_date, target_date, z.label, z.lo, z.hi,
-                         z.key, z.key_name, z.stars, z.weight, z.members,
-                         sheet.day_type, sheet.cpr_pct, sheet.range_pct, params_hash))
-        with _LOCK:
-            self._con.execute(
-                "DELETE FROM zone_sheets WHERE symbol = ? AND basis_date = ?",
-                [symbol, sheet.basis_date])
-            self._con.executemany("""
-                INSERT INTO zone_sheets
-                (symbol, basis_date, target_date, label, lo, hi, key_px, key_name,
-                 stars, weight, members, day_type, cpr_pct, range_pct, params_hash)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, rows)
+        zones=list(sheet.resistances)+list(sheet.supports)+([sheet.at_zone] if sheet.at_zone else [])
+        rows=[(symbol,sheet.basis_date,target_date,z.label,z.lo,z.hi,z.key,z.key_name,z.stars,z.weight,z.members,sheet.day_type,sheet.cpr_pct,sheet.range_pct,params_hash) for z in zones]
+        with self.connection() as con:
+            con.execute("DELETE FROM zone_sheets WHERE symbol=%s AND basis_date=%s",[symbol,sheet.basis_date])
+            con.executemany("""INSERT INTO zone_sheets(symbol,basis_date,target_date,label,lo,hi,key_px,key_name,stars,weight,members,day_type,cpr_pct,range_pct,params_hash) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",rows)
         return len(rows)
 
-    def get_sheet(self, symbol, basis_date):
-        return self.q("""
-            SELECT * FROM zone_sheets
-            WHERE symbol = ? AND basis_date = ?
-            ORDER BY key_px DESC
-        """, [symbol, basis_date])
+    def get_sheet(self,symbol,basis_date):
+        return self.q("SELECT * FROM zone_sheets WHERE symbol=? AND basis_date=? ORDER BY key_px DESC",[symbol,basis_date])
 
-    # ---------- outcomes ----------
-    def save_outcomes(self, symbol, target_date, recs, day_type, gap_pct, open_pos):
-        rows = [(symbol, target_date, r['label'], r['stars'], r['key'], r['key_name'],
-                 r['lo'], r['hi'], r['touched'], r['bounced'], r['broke'], r['held'],
-                 r['opened_inside'], day_type, gap_pct, open_pos) for r in recs]
-        with _LOCK:
-            self._con.execute(
-                "DELETE FROM zone_outcomes WHERE symbol = ? AND target_date = ?",
-                [symbol, target_date])
-            self._con.executemany("""
-                INSERT INTO zone_outcomes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, rows)
+    def save_outcomes(self,symbol,target_date,recs,day_type,gap_pct,open_pos):
+        rows=[(symbol,target_date,r['label'],r['stars'],r['key'],r['key_name'],r['lo'],r['hi'],r['touched'],r['bounced'],r['broke'],r['held'],r['opened_inside'],day_type,gap_pct,open_pos) for r in recs]
+        with self.connection() as con:
+            con.execute("DELETE FROM zone_outcomes WHERE symbol=%s AND target_date=%s",[symbol,target_date])
+            con.executemany("INSERT INTO zone_outcomes(symbol,target_date,label,stars,key_px,key_name,lo,hi,touched,bounced,broke,held,opened_inside,day_type,gap_pct,open_pos) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",rows)
         return len(rows)
 
-    def counts(self, symbol: str):
-        d = self.q("""
-            SELECT
-              (SELECT count(*) FROM intraday_bars WHERE symbol = ?)   AS bars,
-              (SELECT count(DISTINCT target_date) FROM zone_outcomes WHERE symbol = ?) AS sessions,
-              (SELECT count(*) FROM zone_outcomes WHERE symbol = ?)   AS zone_obs
-        """, [symbol, symbol, symbol])
-        return d.iloc[0].to_dict()
+    def counts(self,symbol):
+        row=self.one("""SELECT (SELECT count(*) FROM intraday_bars WHERE symbol=?) bars,
+        (SELECT count(DISTINCT target_date) FROM zone_outcomes WHERE symbol=?) sessions,
+        (SELECT count(*) FROM zone_outcomes WHERE symbol=?) zone_obs""",[symbol,symbol,symbol])
+        return row

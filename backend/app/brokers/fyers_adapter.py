@@ -34,10 +34,11 @@ class FyersAdapter(BrokerAdapter):
         "MIDCPNIFTY": "NSE:MIDCPNIFTY-INDEX",
     }
 
-    def __init__(self, client_id: str | None = None, access_token: str | None = None):
-        self.client_id = client_id or os.getenv("FYERS_CLIENT_ID", "937RN4D2JZ-100")
-        
-        # Check environment or .fyers_token file
+    def __init__(self, client_id: str | None = None, access_token: str | None = None, **_):
+        self.client_id = client_id or os.getenv("FYERS_CLIENT_ID")
+
+        # Environment/file loading remains for backwards compatibility. Admin-
+        # managed connections pass both values explicitly through the registry.
         token = access_token or os.getenv("FYERS_ACCESS_TOKEN")
         if not token:
             token_file = Path(__file__).resolve().parent.parent.parent / ".fyers_token"

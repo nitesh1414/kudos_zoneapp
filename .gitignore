@@ -1,8 +1,13 @@
 __pycache__/
 *.py[cod]
 venv/
+.venv/
 .env
 data/
 *.duckdb
 *.duckdb.wal
 nohup.out
+*.log
+*.png
+backend/.fyers_token
+backups/

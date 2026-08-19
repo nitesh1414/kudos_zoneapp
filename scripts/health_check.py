@@ -49,7 +49,7 @@ def health_check(store: Store, symbol: str) -> list:
 
 
 if __name__ == '__main__':
-    db = os.environ.get('ZONEAPP_DB', './data/zoneapp.duckdb')
+    db = os.environ.get('DATABASE_URL')
     symbol = os.environ.get('ZONEAPP_SYMBOL', 'NSE:NIFTY50-INDEX')
     store = Store(db)
     issues = health_check(store, symbol)

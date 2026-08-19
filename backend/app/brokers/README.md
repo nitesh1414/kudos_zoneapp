@@ -1,14 +1,18 @@
-# Adding a broker
+# Adding a broker provider
 
-No broker is chosen yet. When one is:
+The API, worker and UI depend only on `BrokerAdapter`; they do not contain
+Fyers-specific branches.
 
-1. New file: `brokers/<name>_adapter.py`
-2. Implement every method of `BrokerAdapter` (see `base.py`)
-3. Read credentials from environment variables only — never hardcode,
-   never put them in this repo, never put them in any Excel file
-4. Register it in `main.py` where `CSVAdapter` is currently instantiated
-5. Verify before trusting: pull a small (5-10 day) date range and manually
-   compare 2-3 candles against a chart on the broker's own platform before
-   wiring it into the EOD job
+1. Add `brokers/<name>_adapter.py` and implement every method in `base.py`.
+2. Keep the provider SDK import inside that adapter.
+3. Accept credentials as constructor keyword arguments. Do not hardcode or
+   write credentials to files.
+4. Add a `BrokerType` entry in `registry.py`. Its `fields` metadata is used by
+   the admin UI to build the connection form.
+5. Verify profile/auth, several historical candles and symbol mapping against
+   the provider's own platform before enabling the EOD worker.
 
-Full detail: DEVELOPER_BIBLE.md §5.
+A user can then add any number of connections for the registered provider and
+assign them to clients without code or deployment changes. An entirely new
+provider still needs an adapter because authentication and response formats
+are not standardized across brokers.

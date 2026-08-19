@@ -1,0 +1,31 @@
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: zoneapp
+      POSTGRES_USER: zoneapp
+      POSTGRES_PASSWORD: zoneapp-local-password
+    ports:
+      - "5432:5432"
+    volumes:
+      - zoneapp_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zoneapp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://zoneapp:zoneapp-local-password@db:5432/zoneapp
+      ZONEAPP_ADMIN_USERNAME: admin
+      ZONEAPP_ADMIN_PASSWORD: local-admin-password
+      ZONEAPP_API_KEY: local-job-key
+      ZONEAPP_SECURE_COOKIES: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  zoneapp_postgres:
