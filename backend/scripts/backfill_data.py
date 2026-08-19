@@ -2,7 +2,7 @@
 scripts/backfill_data.py — Standalone CLI backfill tool.
 
 Fetches historical candles from Fyers for a specific date range,
-stores them into DuckDB, and recalculates the EOD zone levels.
+stores them into PostgreSQL/TimescaleDB, and recalculates the EOD zone levels.
 
 Usage:
     python -m scripts.backfill_data --days 120
@@ -24,7 +24,7 @@ from app.brokers.fyers_adapter import FyersAdapter
 from app.db import Store
 from app.service import ZoneParams, run_eod
 
-DB_PATH = os.getenv("ZONEAPP_DB", str(backend_root / "data" / "zoneapp.duckdb"))
+DATABASE_URL = os.getenv("DATABASE_URL")
 SYMBOL = os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX")
 
 
@@ -90,7 +90,7 @@ def run_backfill():
     print(f"Symbol     : {args.symbol}")
     print(f"Resolution : {args.resolution} min")
     print(f"Date Range : {start_date} -> {end_date}")
-    print(f"Database   : {DB_PATH}")
+    print(f"Database   : {DATABASE_URL}")
     print("=" * 65)
 
     # 1. Initialize Adapter and Store
@@ -118,10 +118,10 @@ def run_backfill():
     print(f"     Earliest : {df['ts'].min()}")
     print(f"     Latest   : {df['ts'].max()}")
 
-    # 2. Ingest into DuckDB
-    print("\n[2/3] Writing to DuckDB...")
-    store = Store(DB_PATH)
-    n_upserted = store.upsert_bars(df, args.symbol, "fyers")
+    # 2. Ingest into PostgreSQL/TimescaleDB
+    print("\n[2/3] Writing to PostgreSQL/TimescaleDB...")
+    store = Store(DATABASE_URL)
+    n_upserted = store.upsert_bars(df, args.symbol, "fyers", args.resolution)
     print(f"[OK] Upserted {n_upserted:,} bars into database.")
 
     # 3. Recalculate EOD Zone Statistics

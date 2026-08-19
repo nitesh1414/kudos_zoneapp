@@ -19,7 +19,7 @@ def main():
         raise SystemExit('usage: python scripts/seed.py <csv-path> [symbol]')
     csv = sys.argv[1]
     symbol = sys.argv[2] if len(sys.argv) > 2 else os.environ.get('ZONEAPP_SYMBOL', 'NSE:NIFTY50-INDEX')
-    db = os.environ.get('ZONEAPP_DB', './data/local.duckdb')
+    db = os.environ.get('DATABASE_URL')
 
     store = Store(db)
     df = CSVAdapter(csv).fetch_historical(symbol, '15', '1900-01-01', '2100-01-01')

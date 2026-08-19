@@ -3,7 +3,7 @@ app/brokers/fyers_adapter.py — Fyers API v3 integration with dynamic token loa
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -20,10 +20,18 @@ class FyersAdapter(BrokerAdapter):
         "1D": "D",
         "day": "D",
         "1": "1",
+        "2": "2",
+        "3": "3",
         "5": "5",
+        "10": "10",
         "15": "15",
+        "20": "20",
         "30": "30",
+        "45": "45",
         "60": "60",
+        "120": "120",
+        "180": "180",
+        "240": "240",
     }
 
     SYMBOL_MAP = {
@@ -34,10 +42,11 @@ class FyersAdapter(BrokerAdapter):
         "MIDCPNIFTY": "NSE:MIDCPNIFTY-INDEX",
     }
 
-    def __init__(self, client_id: str | None = None, access_token: str | None = None):
-        self.client_id = client_id or os.getenv("FYERS_CLIENT_ID", "937RN4D2JZ-100")
-        
-        # Check environment or .fyers_token file
+    def __init__(self, client_id: str | None = None, access_token: str | None = None, **_):
+        self.client_id = client_id or os.getenv("FYERS_CLIENT_ID")
+
+        # Environment/file loading remains for backwards compatibility. Admin-
+        # managed connections pass both values explicitly through the registry.
         token = access_token or os.getenv("FYERS_ACCESS_TOKEN")
         if not token:
             token_file = Path(__file__).resolve().parent.parent.parent / ".fyers_token"
@@ -87,30 +96,40 @@ class FyersAdapter(BrokerAdapter):
         fyers_sym = self._normalize_symbol(symbol)
         fyers_res = self.RESOLUTION_MAP.get(str(resolution), str(resolution))
 
-        payload = {
-            "symbol": fyers_sym,
-            "resolution": fyers_res,
-            "date_format": "1",
-            "range_from": date_from,
-            "range_to": date_to,
-            "cont_flag": "1",
-        }
+        start = datetime.strptime(date_from, "%Y-%m-%d").date()
+        end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        if end < start:
+            raise BrokerError("date_to must not be before date_from")
 
-        try:
-            res = self.client.history(data=payload)
-        except Exception as e:
-            raise BrokerError(f"Network error during Fyers history fetch: {str(e)}") from e
+        # Fyers limits a request window. Chunking here means every caller can
+        # request the full available date range without knowing provider limits.
+        window_days = 366 if fyers_res == "D" else 100
+        candles, cursor = [], start
+        last_response = None
+        while cursor <= end:
+            chunk_end = min(end, cursor + timedelta(days=window_days - 1))
+            payload = {
+                "symbol": fyers_sym, "resolution": fyers_res, "date_format": "1",
+                "range_from": cursor.isoformat(), "range_to": chunk_end.isoformat(),
+                "cont_flag": "1",
+            }
+            try:
+                res = self.client.history(data=payload)
+            except Exception as e:
+                raise BrokerError(f"Network error during Fyers history fetch: {str(e)}") from e
+            last_response = res
+            if isinstance(res, dict) and res.get("s") == "ok":
+                candles.extend(res.get("candles", []))
+            else:
+                msg = res.get("message", "History fetch failed") if isinstance(res, dict) else str(res)
+                # Empty historical windows are valid (before listing, holiday-only
+                # range). Authentication/rate-limit errors are not silently ignored.
+                if "no data" not in msg.lower() and "no_data" not in str(res).lower():
+                    raise BrokerError(f"Fyers history API error: {msg}", raw=res)
+            cursor = chunk_end + timedelta(days=1)
 
-        if not isinstance(res, dict) or res.get("s") != "ok":
-            msg = res.get("message", "History fetch failed") if isinstance(res, dict) else str(res)
-            raise BrokerError(f"Fyers history API error: {msg}", raw=res)
-
-        candles = res.get("candles", [])
         if not candles:
-            raise BrokerError(
-                f"No candle data returned for {fyers_sym} ({date_from} to {date_to})",
-                raw=res,
-            )
+            raise BrokerError(f"No candle data returned for {fyers_sym} ({date_from} to {date_to})", raw=last_response)
 
         df = pd.DataFrame(candles, columns=["ts_raw", "o", "h", "l", "c", "v"])
         df["ts"] = pd.to_datetime(df["ts_raw"], unit="s", utc=True).dt.tz_convert(
@@ -123,7 +142,7 @@ class FyersAdapter(BrokerAdapter):
         df["c"] = df["c"].astype(float)
         df["v"] = df["v"].fillna(0.0).astype(float)
 
-        return df[["ts", "o", "h", "l", "c", "v"]].sort_values("ts").reset_index(drop=True)
+        return df[["ts", "o", "h", "l", "c", "v"]].drop_duplicates("ts", keep="last").sort_values("ts").reset_index(drop=True)
 
     def fetch_live_quote(self, symbol: str) -> dict:
         if not self.client:
@@ -147,7 +166,7 @@ class FyersAdapter(BrokerAdapter):
         cmd = v_data.get("cmd", {})
 
         return {
-            "ts": datetime.now(),
+            "ts": datetime.now(ZoneInfo("Asia/Kolkata")),
             "ltp": float(v_data.get("lp", 0.0)),
             "o": float(v_data.get("open_price", cmd.get("o", 0.0))),
             "h": float(v_data.get("high_price", cmd.get("h", 0.0))),
