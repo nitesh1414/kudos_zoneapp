@@ -22,6 +22,14 @@ services:
       ZONEAPP_ADMIN_PASSWORD: local-admin-password
       ZONEAPP_API_KEY: local-job-key
       ZONEAPP_SECURE_COOKIES: "false"
+      ZONEAPP_SYMBOL: NSE:NIFTY50-INDEX
+      # Default Fyers broker credentials (pre-filled in admin UI)
+      FYERS_CLIENT_ID: 937RN4D2JZ-100
+      FYERS_SECRET_KEY: 5BZ4LOWW38
+      FYERS_USER_ID: FAH49247
+      FYERS_PIN: 1234
+      FYERS_TOTP_KEY: YDD7MARVVZENQ6N5XWVBRATDSJLH3WQV
+      FYERS_REDIRECT_URI: https://fyers.in/
     ports:
       - "8000:8000"
     depends_on:
