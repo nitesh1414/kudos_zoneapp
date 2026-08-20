@@ -4,6 +4,7 @@ service.py - orchestration and statistics.
 Two responsibilities:
   1. run_eod()  - compute the next session's zones and score yesterday's
   2. stats_*()  - historical base rates read back out of the database
+  3. dashboard_* — panels surfaced on the client dashboard
 
 A NOTE ON THE NUMBERS THIS RETURNS
     These are base rates: what happened historically, in a sample. They are
@@ -15,7 +16,7 @@ A NOTE ON THE NUMBERS THIS RETURNS
 """
 import hashlib
 import json
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -195,3 +196,302 @@ def recent_sessions(store, symbol: str, limit: int = 20):
         GROUP BY 1,2,3,4
         ORDER BY 1 DESC LIMIT ?
     """, [symbol, limit]).to_dict('records')
+
+
+# --------------------------- DASHBOARD PANELS ---------------------------
+def _daily_with_cpr(store, symbol: str) -> pd.DataFrame:
+    """Daily OHLC augmented with prior-day fields and CPR classification.
+
+    The standard 'stats_days' helper does almost the same thing; we duplicate
+    it here so the dashboard helpers don't have to keep re-loading and so
+    zone recalculation can stand alone.
+    """
+    d = store.daily(symbol)
+    if d.empty or len(d) < 3:
+        return d
+    d = d.reset_index(drop=True)
+    d['pc'] = d['c'].shift(1)
+    d['ph'] = d['h'].shift(1)
+    d['pl'] = d['l'].shift(1)
+    d = d.dropna().reset_index(drop=True)
+    d['gap_pct'] = (d['o'] - d['pc']) / d['pc'] * 100
+    d['abs_gap'] = d['gap_pct'].abs()
+    d['rng_pct'] = (d['h'] - d['l']) / d['pc'] * 100
+    cpr_pct = (2 * (d['ph'] + d['pl'] + d['pc']) / 3 - (d['ph'] + d['pl'])).abs() / d['pc'] * 100
+    d['day_type'] = [classify_day(x) for x in cpr_pct]
+    loc = (d['c'] - d['l']) / (d['h'] - d['l']).replace(0, pd.NA)
+    median_rng = d['rng_pct'].median()
+    d['trend_day'] = ((loc >= 0.75) | (loc <= 0.25)) & (d['rng_pct'] >= median_rng)
+    d['filled'] = [
+        (row.l <= row.pc) if row.o > row.pc else
+        ((row.h >= row.pc) if row.o < row.pc else True)
+        for row in d.itertuples()
+    ]
+    d['up'] = d['c'] > d['o']
+    return d
+
+
+def cpr_matrix(store, symbol: str):
+    """CPR-type probability matrix used on the dashboard.
+
+    For each CPR day-type (NARROW / NORMAL / WIDE) we report:
+      n              – sample size
+      trend_day_pct  – % of those sessions that became trend days
+      fill_pct       – % that filled the previous gap
+      up_day_pct     – % that closed above their open
+      avg_range_pct  – mean intraday range as % of prior close
+      avg_gap_pct    – mean absolute gap as % of prior close
+    """
+    d = _daily_with_cpr(store, symbol)
+    if d.empty:
+        return dict(rows=[], n=0, total_sample=0)
+    rows = []
+    for cpr_type in ('NARROW', 'NORMAL', 'WIDE'):
+        sub = d[d['day_type'] == cpr_type]
+        if sub.empty:
+            rows.append(dict(group=cpr_type, n=0, trend_day_pct=None,
+                             fill_pct=None, up_day_pct=None,
+                             avg_range_pct=None, avg_gap_pct=None))
+            continue
+        rows.append(dict(
+            group=cpr_type,
+            n=int(len(sub)),
+            trend_day_pct=round(100 * float(sub['trend_day'].mean()), 1),
+            fill_pct=round(100 * float(sub['filled'].mean()), 1),
+            up_day_pct=round(100 * float(sub['up'].mean()), 1),
+            avg_range_pct=round(float(sub['rng_pct'].mean()), 2),
+            avg_gap_pct=round(float(sub['abs_gap'].mean()), 2),
+        ))
+    return dict(rows=rows, total_sample=int(len(d)),
+                note='545-session benchmark built from a prior empirical study; '
+                     'values shown are computed on your stored sample.')
+
+
+def gap_guide(store, symbol: str):
+    """Return gap-size buckets with their historical fill rates."""
+    d = _daily_with_cpr(store, symbol)
+    if d.empty:
+        return dict(rows=[], total_sample=0, total_gaps=0)
+    rows = []
+    for a, b in GAP_BUCKETS:
+        sub = d[(d['abs_gap'] >= a) & (d['abs_gap'] < b)]
+        if len(sub) == 0:
+            continue
+        rows.append(dict(
+            bucket_label=f'{a}-{b}' if b < 900 else f'>{a}',
+            bucket_lo=a, bucket_hi=b,
+            n=int(len(sub)),
+            fill_pct=round(100 * float(sub['filled'].mean()), 1),
+        ))
+    return dict(rows=rows, total_sample=int(len(d)), total_gaps=int(len(d)))
+
+
+def _outcome_for(store, symbol: str, target_date: str) -> dict:
+    """Pull actual outcomes for one completed session."""
+    out = store.q(
+        "SELECT label, touched, bounced, broke, held "
+        "FROM zone_outcomes WHERE symbol=? AND target_date=?",
+        [symbol, target_date]).to_dict('records')
+    return {r['label']: r for r in out}
+
+
+def session_recap(store, symbol: str, target_date: str = None, p: ZoneParams = None):
+    """Recap one past (completed) session."""
+    p = p or ZoneParams()
+    daily = store.daily(symbol)
+    if daily.empty:
+        return None
+    daily = daily.reset_index(drop=True)
+    daily['d'] = daily['d'].astype(str)
+
+    if target_date is None:
+        target_date = str(daily.iloc[-1]['d'])
+
+    target_idx = daily.index[daily['d'] == str(target_date)]
+    if len(target_idx) == 0:
+        return None
+    target_idx = int(target_idx[0])
+    if target_idx == 0:
+        return None
+    target = daily.iloc[target_idx]
+    basis = daily.iloc[target_idx - 1]
+
+    sheet = build_sheet(str(basis['d']), float(basis['h']),
+                         float(basis['l']), float(basis['c']), p)
+    zones = list(sheet.resistances) + list(sheet.supports)
+    if sheet.at_zone:
+        zones.append(sheet.at_zone)
+
+    baseline_pd = float(basis['c'])
+    actuals = dict(
+        date=target_date,
+        open=float(target['o']), high=float(target['h']),
+        low=float(target['l']), close=float(target['c']),
+        change_pct=round(100 * (float(target['c']) - baseline_pd) / baseline_pd, 2),
+        gap_pct=round(100 * (float(target['o']) - baseline_pd) / baseline_pd, 2),
+        day_type=sheet.day_type,
+        prev_close=baseline_pd,
+        prev_high=float(basis['h']), prev_low=float(basis['l']),
+        range_pct=round(100 * (float(target['h']) - float(target['l'])) / baseline_pd, 2),
+    )
+
+    outcomes = _outcome_for(store, symbol, target_date)
+    zone_payload = []
+    for z in zones:
+        actual = outcomes.get(z.label, {})
+        if actual.get('touched'):
+            if actual.get('broke') and not actual.get('held'):
+                result = 'BROKE'
+            elif actual.get('held'):
+                result = 'HELD'
+            elif actual.get('bounced') and not actual.get('broke'):
+                result = 'TOUCHED'
+            else:
+                result = 'TOUCHED' if not actual.get('broke') else 'BROKE'
+        else:
+            result = 'NOT REACHED'
+        zone_payload.append(dict(
+            label=z.label, lo=z.lo, hi=z.hi, key=z.key,
+            key_name=z.key_name, stars=z.stars, weight=z.weight,
+            members=z.members, result=result,
+        ))
+
+    touched_count = sum(1 for z in zone_payload if z['result'] in ('TOUCHED', 'HELD', 'BROKE'))
+    held_count = sum(1 for z in zone_payload if z['result'] == 'HELD')
+    broke_count = sum(1 for z in zone_payload if z['result'] == 'BROKE')
+    direction = 'Up' if actuals['change_pct'] >= 0 else 'Down'
+    gap_dir = 'up' if actuals['gap_pct'] >= 0 else 'down'
+    commentary = (
+        f"{direction} {abs(round(actuals['change_pct'], 2))}% close-to-close; "
+        f"gapped {gap_dir} {abs(round(actuals['gap_pct'], 2))}% from prior close. "
+        f"Of {len(zone_payload)} S/R zones, {touched_count} touched · "
+        f"{held_count} held · {broke_count} broke. Basis CPR was "
+        f"{sheet.day_type}."
+    )
+
+    return dict(
+        date=target_date,
+        basis=dict(
+            date=str(basis['d']),
+            high=float(basis['h']), low=float(basis['l']), close=baseline_pd,
+            range_pct=round(100 * (float(basis['h']) - float(basis['l'])) / baseline_pd, 2),
+        ),
+        actuals=actuals,
+        zones=zone_payload,
+        commentary=commentary,
+    )
+
+
+def match_check(store, symbol: str, target_date: str = None, p: ZoneParams = None):
+    """Compare what ACTUALLY happened on `target_date` with the BASE LINE
+    statistics for that day's CPR-type."""
+    p = p or ZoneParams()
+    recap = session_recap(store, symbol, target_date, p)
+    if recap is None:
+        return None
+
+    day_type = recap['actuals']['day_type']
+    matrix = cpr_matrix(store, symbol)
+    base = next((r for r in matrix['rows'] if r['group'] == day_type), None)
+
+    prev_close = recap['actuals']['prev_close']
+    a = recap['actuals']
+    # gap fill: did the price retrace to (or past) prev_close during the day?
+    if a['gap_pct'] >= 0:
+        actual_filled = a['low'] <= prev_close
+    else:
+        actual_filled = a['high'] >= prev_close
+
+    rng = a['high'] - a['low']
+    if rng > 0:
+        loc = (a['close'] - a['low']) / rng
+        actual_trend = loc >= 0.75 or loc <= 0.25
+    else:
+        actual_trend = False
+
+    fill_distance_pct = round(100 * (a['close'] - prev_close) / prev_close, 2)
+
+    trend_pct = base['trend_day_pct'] if base and base['trend_day_pct'] is not None else None
+    fill_pct = base['fill_pct'] if base and base['fill_pct'] is not None else None
+
+    verdict = (
+        f"{'trend day' if actual_trend else 'non-trend day'} · "
+        f"Gap {'FILLED' if actual_filled else 'NOT FILLED'} "
+        f"({fill_distance_pct}% from PDC)"
+    )
+
+    commentary = (
+        f"{day_type} CPR type: trend-day {trend_pct if trend_pct is not None else '-'}%, "
+        f"gap-fill {fill_pct if fill_pct is not None else '-'}% historically. "
+        f"Actual: {verdict}."
+    )
+
+    return dict(
+        basis_cpr_type=day_type,
+        base_row=base,
+        actual=dict(
+            trend_day=bool(actual_trend),
+            filled=bool(actual_filled),
+            fill_distance_pct=fill_distance_pct,
+        ),
+        verdict=verdict,
+        commentary=commentary,
+    )
+
+
+def dashboard_payload(store, symbol: str, p: ZoneParams = None):
+    """All panels surfaced on the client dashboard, in one round-trip."""
+    p = p or ZoneParams()
+    basis = store.last_complete_day(symbol)
+    sheet = next_session_sheet(store, symbol, p)
+
+    basis_meta = None
+    if basis is not None:
+        rng_pct = (100 * (float(basis.h) - float(basis.l)) / float(basis.c)) if basis.c else 0
+        basis_meta = dict(
+            date=str(basis.d),
+            high=float(basis.h), low=float(basis.l), close=float(basis.c),
+            range_pct=round(float(rng_pct), 2),
+        )
+
+    zones_panel = dict(basis=basis_meta, day_type=None, rows=[])
+    if sheet is not None and basis is not None:
+        zones_panel['day_type'] = sheet.day_type
+
+        # Order rows in 'spread' order, top-down: R4, R3, R2, R1, AT, S1, S2, S3, S4
+        # The sheet gives them naturally ordered; just relabel zones as R/S
+        rows = []
+        for z in (list(sheet.resistances) + list(sheet.supports) +
+                  ([sheet.at_zone] if sheet.at_zone else [])):
+            kind = ('R' if z.label.startswith('R') else
+                    'S' if z.label.startswith('S') else 'AT')
+            rows.append(dict(
+                label=z.label, lo=z.lo, hi=z.hi,
+                key=z.key, key_name=z.key_name,
+                weight=z.weight, stars=z.stars,
+                kind=kind,
+                dist_from_pdc=round(z.key - float(basis.c), 1),
+            ))
+        zones_panel['rows'] = rows
+
+    daily = store.daily(symbol)
+    if daily.empty:
+        recap_target = None
+    else:
+        recap_target = str(daily.iloc[-1].d)
+
+    recap = session_recap(store, symbol, recap_target, p)
+    match = match_check(store, symbol, recap_target, p)
+
+    gift = store.kv_get("dashboard_gift_nifty", default=None)
+
+    return dict(
+        server_time=datetime.utcnow().isoformat() + 'Z',
+        symbol=symbol,
+        zones=zones_panel,
+        cpr_matrix=cpr_matrix(store, symbol),
+        gap_guide=gap_guide(store, symbol),
+        session_recap=recap,
+        match_check=match,
+        gift_nifty=gift,
+    )

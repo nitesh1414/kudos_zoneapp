@@ -7,6 +7,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -21,7 +22,7 @@ from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker
 from .db import Store
 from .instruments import SOURCES, search_instruments
 from .jobs import run_market_close
-from .service import ZoneParams, next_session_sheet, recent_sessions, run_eod, stats_days, stats_zones
+from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_recap, stats_days, stats_zones)
 
 API_KEY = os.getenv("ZONEAPP_API_KEY", "")
 UPLOAD_DIR = os.getenv("ZONEAPP_UPLOADS", "./data/uploads")
@@ -84,6 +85,8 @@ class BrokerIn(BaseModel):
     resolutions: list[str] = Field(default_factory=lambda: list(INDIA_CANDLE_RESOLUTIONS))
 class BrokerTokenIn(BaseModel):
     access_token: str = Field(min_length=10)
+class TokenExchangeIn(BaseModel):
+    auth_code: str = Field(min_length=1)
 class BackfillIn(BaseModel):
     symbol: str
     date_from: str = "2010-01-01"
@@ -95,12 +98,26 @@ class HolidayIn(BaseModel):
 class ParamsIn(BaseModel):
     cluster_tol: float=25; zone_half_w: float=15; round_step: float=100
     zones_per_side: int=4; break_pts: float=15; bounce_pts: float=45
+class GiftNiftyIn(BaseModel):
+    ltp: float = Field(gt=0)
+    pdc: float = Field(gt=0)
+    captured_at: str | None = None
+class DashboardQuery(BaseModel):
+    date: str | None = None
 
 
-@app.get("/")
-def root(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    user=session_user(store,token)
-    return RedirectResponse("/admin" if user and user["role"]=="admin" else ("/app" if user else "/login"))
+# ------------------------------ DASHBOARD ------------------------------
+@app.get("/", response_class=HTMLResponse)
+def dashboard(token: str|None=Cookie(None,alias=COOKIE_NAME)):
+    """Serve the NIFTY 50 Trading Levels & Analytics dashboard.
+
+    The same single-page dashboard is the entry point for admin, client and
+    even anonymous visitors. The page reads /api/dashboard which falls back
+    to the default symbol when no session cookie is present.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, "templates", "index.html")) as f:
+        return f.read()
 @app.get("/login")
 def login_page(): return FileResponse(TEMPLATES/"login.html")
 @app.get("/admin")
@@ -118,7 +135,7 @@ def login(body: LoginIn):
     if not user or not verify_password(body.password,user["password_hash"]):
         raise HTTPException(401,"Invalid username or password")
     token,expires=create_session(store,user["id"])
-    response=JSONResponse({"ok":True,"role":user["role"],"redirect":"/admin" if user["role"]=="admin" else "/app"})
+    response=JSONResponse({"ok":True,"role":user["role"],"redirect":"/"})
     response.set_cookie(COOKIE_NAME,token,httponly=True,samesite="lax",secure=os.getenv("ZONEAPP_SECURE_COOKIES","true").lower()=="true",expires=expires)
     return response
 @app.post("/api/auth/logout")
@@ -169,13 +186,16 @@ def brokers(_=Depends(admin_user)):
 def add_broker(body:BrokerIn,_=Depends(admin_user)):
     spec=next((x for x in broker_types() if x["key"]==body.broker_type),None)
     if not spec: raise HTTPException(400,"Unsupported broker type")
-    required={f["name"] for f in spec["fields"]}
-    if not required.issubset(body.credentials): raise HTTPException(400,f"Missing credentials: {', '.join(sorted(required-set(body.credentials)))}")
+    # Only fields marked as required (default True) are mandatory
+    required={f["name"] for f in spec["fields"] if f.get("required", True)}
+    if not required.issubset(body.credentials): raise HTTPException(400,f"Missing required fields: {', '.join(sorted(required-set(body.credentials)))}")
     selected=[r for r in dict.fromkeys(body.resolutions) if r in INDIA_CANDLE_RESOLUTIONS]
     if "15" not in selected: selected.append("15")  # zone engine's canonical timeframe
     broker_type=get_broker_type(body.broker_type)
-    auth=make_broker(body.broker_type,body.credentials).auth_status()
-    if not auth.connected: raise HTTPException(400,f"Broker was not saved: {auth.message}")
+    # Only verify auth if an access_token was provided
+    if body.credentials.get("access_token"):
+        auth=make_broker(body.broker_type,body.credentials).auth_status()
+        if not auth.connected: raise HTTPException(400,f"Broker was not saved: {auth.message}")
     now=datetime.now(timezone.utc)
     expiry=now+timedelta(hours=broker_type.token_ttl_hours) if broker_type.token_ttl_hours and body.credentials.get("access_token") else None
     row=store.one("""INSERT INTO broker_connections(name,broker_type,credentials,resolutions,token_updated_at,token_expires_at,enabled)
@@ -197,6 +217,26 @@ def update_broker_token(broker_id:int,body:BrokerTokenIn,user=Depends(current_us
     store.exec("UPDATE broker_connections SET credentials=?::jsonb,token_updated_at=?,token_expires_at=?,updated_at=now() WHERE id=?",
                [json.dumps(encrypt_credentials(credentials)),now,expires,broker_id])
     return {"ok":True,"connected":True,"message":status.message,"expires_at":expires}
+
+@app.get("/api/brokers/fyers/generate-url")
+def fyers_generate_url(_=Depends(admin_user)):
+    """Returns the Fyers OAuth authorization URL for the admin to visit."""
+    try:
+        from .brokers.generate_token import get_login_url
+        url = get_login_url()
+        return {"ok": True, "url": url}
+    except Exception as e:
+        raise HTTPException(400, f"Failed to generate login URL: {str(e)}")
+
+@app.post("/api/brokers/fyers/exchange-token")
+def fyers_exchange_token(body: TokenExchangeIn, _=Depends(admin_user)):
+    """Exchange a Fyers auth_code for an access_token. Returns the token to be saved."""
+    try:
+        from .brokers.generate_token import exchange_code_for_token
+        token = exchange_code_for_token(body.auth_code)
+        return {"ok": True, "access_token": token}
+    except Exception as e:
+        raise HTTPException(400, f"Token exchange failed: {str(e)}")
 
 @app.delete("/api/admin/brokers/{broker_id}")
 def delete_broker(broker_id:int,_=Depends(admin_user)):
@@ -230,6 +270,36 @@ def backfill_broker(broker_id:int,body:BackfillIn,_=Depends(admin_user)):
     result=run_eod(store,body.symbol,params(),rebuild_all=True) if "15" in resolutions else {"ok":True,"message":"Candles stored; 15-minute data is required for zone results"}
     return {"ok":True,"symbol":body.symbol,"by_resolution":counts,**result}
 
+
+@app.get("/api/dashboard/public")
+def dashboard_public(date:str|None=None):
+    """Same payload as /api/dashboard, but uses the default symbol from
+    ZONEAPP_SYMBOL and works for unauthenticated visitors."""
+    symbol = os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX")
+    payload = dashboard_payload(store, symbol, params())
+    payload["authenticated"] = False
+    payload["can_edit"] = False
+    if date:
+        r = session_recap(store, symbol, date, params())
+        m = match_check(store, symbol, date, params())
+        if r: payload["session_recap"] = r
+        if m: payload["match_check"] = m
+    return payload
+
+@app.get("/api/dashboard")
+def dashboard(date:str|None=None,user=Depends(current_user)):
+    """Single round-trip payload for the client dashboard UI."""
+    payload = dashboard_payload(store, user["symbol"], params())
+    payload["authenticated"] = True
+    payload["role"] = user["role"]
+    payload["username"] = user["username"]
+    payload["can_edit"] = (user["role"] == "admin")
+    if date:
+        r = session_recap(store, user["symbol"], date, params())
+        m = match_check(store, user["symbol"], date, params())
+        if r: payload["session_recap"] = r
+        if m: payload["match_check"] = m
+    return payload
 
 # Client result APIs; symbol always comes from the authenticated account.
 @app.get("/api/my/broker")
@@ -272,6 +342,22 @@ def zone_stats(user=Depends(current_user)): return stats_zones(store,user["symbo
 def day_stats(user=Depends(current_user)): return stats_days(store,user["symbol"])
 @app.get("/api/sessions")
 def sessions(limit:int=20,user=Depends(current_user)): return recent_sessions(store,user["symbol"],min(max(limit,1),200))
+
+@app.get("/api/admin/gift-nifty")
+def get_gift_nifty(_=Depends(admin_user)):
+    return store.kv_get("dashboard_gift_nifty")
+
+@app.put("/api/admin/gift-nifty")
+def put_gift_nifty(body: GiftNiftyIn, _=Depends(admin_user)):
+    payload = dict(
+        ltp=body.ltp, pdc=body.pdc,
+        captured_at=body.captured_at or datetime.now(timezone.utc).isoformat(),
+        symbol=os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX"),
+    )
+    payload["gap_pts"] = round(body.ltp - body.pdc, 2)
+    payload["gap_pct"] = round(100 * (body.ltp - body.pdc) / body.pdc, 2)
+    store.kv_set("dashboard_gift_nifty", payload)
+    return {"ok": True, "payload": payload}
 
 @app.post("/api/admin/ingest/csv")
 async def ingest_csv(symbol:str,file:UploadFile=File(...),_=Depends(admin_user)):

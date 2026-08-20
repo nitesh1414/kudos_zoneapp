@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NIFTY 50 — Trading Levels &amp; Analytics · ZoneApp</title>
+<title>NIFTY 50 — Trading Levels · ZoneApp</title>
 <style>
 :root{
   --nav:#101b34;--bg:#f3f6fa;--card:#ffffff;--line:#e0e6ef;
@@ -16,9 +16,11 @@ body{margin:0;background:var(--bg);color:#17223a;font:14px Inter,system-ui,-appl
 header.app{height:64px;background:var(--nav);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 20px}
 header b{color:#73a0ff}
 header .logo{font-size:18px;font-weight:800}
-header .usr{font-size:13px}
-header button{background:#fff1;border:1px solid #fff3;border-radius:7px;padding:7px 11px;color:#fff;cursor:pointer}
+header .usr{font-size:13px;display:flex;gap:10px;align-items:center}
+header button{background:#fff1;border:1px solid #fff3;border-radius:7px;padding:7px 11px;color:#fff;cursor:pointer;font:inherit}
 header button:hover{background:#fff3}
+header .pill{background:#21603a;border:1px solid #2a7748;border-radius:9px;padding:3px 9px;font-size:12px;color:#cfead9}
+header a{color:#73a0ff;text-decoration:none}
 
 .titlebar{background:var(--bluebar);color:#fff;padding:14px 22px;font-weight:800;font-size:18px;letter-spacing:.3px;text-align:center}
 
@@ -30,12 +32,8 @@ header button:hover{background:#fff3}
 .muted{color:var(--muted)}
 .note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}
 
-/* Dashboard layout: 2 columns at top, then stacked sections */
 .dash{display:grid;grid-template-columns:1.45fr 1fr;gap:18px}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.row3{display:grid;grid-template-columns:1.45fr 1fr;gap:18px}
 
-/* Zones table */
 .zones-table{width:100%;border-collapse:collapse;font-size:13px}
 .zones-table th,.zones-table td{border-bottom:1px solid #edf0f5;padding:8px 6px;text-align:left}
 .zones-table th{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px}
@@ -47,7 +45,6 @@ header button:hover{background:#fff3}
 .zones-table .small{font-size:11.5px;color:var(--muted)}
 .zones-table .kpi{font-weight:600;color:#1c2231}
 
-/* CPR matrix */
 .cpr-matrix{width:100%;border-collapse:collapse;font-size:13px}
 .cpr-matrix th,.cpr-matrix td{border-bottom:1px solid #edf0f5;padding:7px 6px;text-align:left}
 .cpr-matrix th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
@@ -55,38 +52,29 @@ header button:hover{background:#fff3}
 .cpr-matrix td.cpr.highlight{color:var(--blue2)}
 .cpr-matrix td.num{font-variant-numeric:tabular-nums}
 
-/* Gap guide */
 .gap-table{width:100%;border-collapse:collapse;font-size:13px}
 .gap-table th,.gap-table td{border-bottom:1px solid #edf0f5;padding:8px 6px;text-align:left}
 .gap-table th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
 .gap-table td.fill{font-variant-numeric:tabular-nums;text-align:left;font-weight:600}
 .gap-table .max-col{background:#fdfaef;border:1px solid #f1dfb6}
 
-/* Session recap */
 .recap-table{width:100%;border-collapse:collapse;font-size:13px}
 .recap-table th,.recap-table td{border-bottom:1px solid #edf0f5;padding:8px 6px;text-align:left}
 .recap-table th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
 
-/* Pill badges */
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:.3px}
 .badge.ok{background:#e7f4ec;color:#126346}
 .badge.warn{background:#fdf3da;color:#946100}
-.badge.held{background:#e8f5ed;color:#18835d}
-.badge.touched{background:#fdf3da;color:#946100}
-.badge.broke{background:#fce9eb;color:#a13344}
-.badge.no{background:#f0f1f5;color:#69768a}
 .result-HELD{color:var(--green);font-weight:700;background:var(--rowS);padding:3px 6px;border-radius:5px;font-size:12px}
 .result-NOT_REACHED{color:var(--muted);font-size:12px}
 .result-TOUCHED{color:#946100;background:var(--amberBg);padding:3px 6px;border-radius:5px;font-size:12px}
 .result-BROKE{color:var(--red);background:var(--rowR);padding:3px 6px;border-radius:5px;font-size:12px;font-weight:700}
 
-/* Match check */
 .match-table{width:100%;border-collapse:collapse;font-size:13px}
 .match-table td{padding:6px 4px;border-bottom:1px dashed #edf0f5}
 .match-table td.k{color:var(--muted);font-size:12px;width:55%}
 .match-table td.v{font-weight:600;text-align:right}
 
-/* GIFT Nifty strip */
 .gift{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;background:#f3f6fa;border-radius:8px;padding:10px 14px}
 .gift .gift-key{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
 .gift .gift-val{font-weight:700;font-size:18px;color:#1c2231}
@@ -103,9 +91,33 @@ header button:hover{background:#fff3}
 .refresh{background:var(--blue);color:#fff;border:0;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:13px}
 .refresh:hover{background:var(--blue2)}
 
+.banner{display:flex;justify-content:space-between;align-items:center;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:13px}
+.banner.info{background:#eaf2ff;border:1px solid #c2d5f6;color:#1c3f87}
+.banner.warn{background:#fff4df;border:1px solid #f1cd83;color:#704b00}
+.banner .x{cursor:pointer;padding:0 6px;opacity:.6}
+.banner .x:hover{opacity:1}
+
+.admin-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:-4px;margin-bottom:14px}
+.admin-chip{background:#fff;border:1px solid var(--line);border-radius:7px;padding:5px 10px;font-size:12px;color:var(--muted)}
+.admin-chip b{color:var(--blue);margin-right:4px}
+.admin-link{background:#fff;border:1px solid var(--line);border-radius:7px;padding:6px 12px;font-size:13px;color:var(--blue);text-decoration:none;display:inline-block}
+.admin-link:hover{background:#f3f6fa}
+
+.modal-back{display:none;position:fixed;inset:0;background:#15203c80;align-items:center;justify-content:center;z-index:99}
+.modal-back.on{display:flex}
+.modal{background:#fff;border-radius:12px;padding:22px;width:min(420px,calc(100% - 32px));box-shadow:0 25px 90px #17223a45}
+.modal h3{margin:0 0 12px;font-size:14px;text-transform:uppercase;color:#243041}
+.modal label{display:block;font-size:12px;font-weight:600;margin:12px 0 6px;color:#243041}
+.modal input{width:100%;padding:9px 10px;border:1px solid #d3d8e1;border-radius:6px;font:inherit}
+.modal .row{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.modal button{border:0;border-radius:7px;padding:8px 14px;cursor:pointer;font:inherit}
+.modal button.primary{background:var(--blue);color:#fff}
+.modal button.ghost{background:#fff;color:#33415c;border:1px solid var(--line)}
+
 @media(max-width:1000px){
-  .dash,.row2,.row3{grid-template-columns:1fr}
-  .match-table{border-collapse:collapse}
+  .dash{grid-template-columns:1fr}
+  header.app{flex-wrap:wrap;height:auto;padding:10px 16px;gap:8px}
+  .titlebar{font-size:16px;padding:10px}
 }
 </style>
 </head>
@@ -113,15 +125,37 @@ header button:hover{background:#fff3}
 
 <header class="app">
   <div class="logo"><b>Zone</b>App · NIFTY 50 Analytics</div>
-  <div class="usr">
-    <span id="userName"></span> &nbsp;
-    <button onclick="logout()">Sign out</button>
+  <div class="usr" id="usrBar">
+    <a id="loginLink" href="/login">Sign in</a>
+    <span id="authBadge" style="display:none" class="pill" title=""></span>
+    <button id="adminBtn" style="display:none" onclick="location.href='/admin'">Admin</button>
+    <button id="signoutBtn" style="display:none" onclick="signout()">Sign out</button>
   </div>
 </header>
 
-<div class="titlebar">NIFTY 50 — TRADING LEVELS &amp; ANALYTICS DASHBOARD</div>
+<div class="titlebar" id="titleBar">NIFTY 50 — TRADING LEVELS &amp; ANALYTICS DASHBOARD</div>
 
 <main class="wrap">
+
+<!-- Anonymous visitor banner -->
+<div class="banner info" id="anonBanner" style="display:none">
+  <span><b>You are viewing a public preview.</b> Sign in to manage brokers, update tokens and backfill data.</span>
+  <a href="/login" class="admin-link">Sign in →</a>
+</div>
+
+<!-- Token status banner (admin only) -->
+<div class="banner warn" id="tokenBanner" style="display:none">
+  <span><b id="tTitle">Broker token action required</b> · <span id="tMsg"></span></span>
+  <button class="refresh" onclick="showGiftDialog()">Update GIFT Nifty snapshot</button>
+</div>
+
+<!-- Admin quick links -->
+<div class="admin-controls" id="adminControls" style="display:none">
+  <a href="/admin" class="admin-link"><b>↗</b> Open Admin</a>
+  <span class="admin-chip"><b>N</b> <span id="adminBars">—</span> bars stored</span>
+  <span class="admin-chip"><b>Z</b> <span id="adminZones">—</span> zone observations</span>
+  <span class="admin-chip"><b>S</b> <span id="adminSessions">—</span> sessions scored</span>
+</div>
 
 <!-- ROW 1: Zones (large) + Check/CPR commentary (right) -->
 <section class="dash">
@@ -132,14 +166,7 @@ header button:hover{background:#fff3}
     <div class="muted" id="zonesBasis" style="font-size:12px;margin-bottom:10px"></div>
     <table class="zones-table" id="zonesTable">
       <thead>
-      <tr>
-        <th>ZONE</th>
-        <th>LEVEL</th>
-        <th>RANGE</th>
-        <th>CONFLUENCE</th>
-        <th>DIST FROM PDC</th>
-        <th>SOURCE</th>
-      </tr>
+      <tr><th>ZONE</th><th>LEVEL</th><th>RANGE</th><th>CONFLUENCE</th><th>DIST FROM PDC</th><th>SOURCE</th></tr>
       </thead>
       <tbody></tbody>
     </table>
@@ -155,9 +182,7 @@ header button:hover{background:#fff3}
     <div class="card">
       <h3 id="cprTitle">CPR PROBABILITY MATRIX</h3>
       <table class="cpr-matrix" id="cprTable">
-        <thead>
-        <tr><th>CPR TYPE</th><th>N</th><th>TREND-DAY%</th><th>FILL %</th><th>UP-DAY%</th><th>AVG.RANGE%</th><th>AVG.GAP%</th></tr>
-        </thead>
+        <thead><tr><th>CPR TYPE</th><th>N</th><th>TREND-DAY%</th><th>FILL %</th><th>UP-DAY%</th><th>AVG.RANGE%</th><th>AVG.GAP%</th></tr></thead>
         <tbody></tbody>
       </table>
       <p class="note" id="cprCommentary"></p>
@@ -165,46 +190,36 @@ header button:hover{background:#fff3}
   </div>
 </section>
 
-<!-- ROW 2: GAP GUIDE (full width strip below) -->
+<!-- ROW 2: GAP GUIDE -->
 <section class="card">
-  <h3 style="margin-bottom:6px">GAP GUIDE — <span class="muted">tomorrow's opening gap context</span></h3>
+  <h3 style="margin-bottom:6px">GAP GUIDE — <span class="muted">opening-gap context for the next session</span></h3>
   <table class="gap-table" id="gapTable">
     <thead>
       <tr>
         <th style="width:140px">|Gap| size</th>
-        <th>&lt;0.1%</th>
-        <th>0.1–0.2%</th>
-        <th>0.2–0.3%</th>
-        <th>0.3–0.45%</th>
-        <th>0.45–0.6%</th>
-        <th class="max-col">0.6–0.9%</th>
-        <th>&gt;0.9%</th>
+        <th>&lt;0.1%</th><th>0.1–0.2%</th><th>0.2–0.3%</th><th>0.3–0.45%</th>
+        <th>0.45–0.6%</th><th class="max-col">0.6–0.9%</th><th>&gt;0.9%</th>
       </tr>
     </thead>
     <tbody>
       <tr>
         <td style="font-weight:600">Fill rate*</td>
-        <td class="fill" id="gapLess01"></td>
-        <td class="fill" id="gap0102"></td>
-        <td class="fill" id="gap0203"></td>
-        <td class="fill" id="gap0304"></td>
-        <td class="fill" id="gap0406"></td>
-        <td class="fill max-col" id="gap0609"></td>
+        <td class="fill" id="gapLess01"></td><td class="fill" id="gap0102"></td>
+        <td class="fill" id="gap0203"></td><td class="fill" id="gap0304"></td>
+        <td class="fill" id="gap0406"></td><td class="fill max-col" id="gap0609"></td>
         <td class="fill" id="gapGt09"></td>
       </tr>
     </tbody>
   </table>
-  <p class="note">* CONFLUENCE = summed weight of the techniques that agree on this level (factual overlap count, NOT a probability). SOURCE = the strongest contributing technique. Zone map built from your stored intraday sample.</p>
-  <p class="note" style="font-style:italic">Methodology note — per-zone hit-rate and hold-rate are deliberately omitted. Across the stored zone-observations, confluence weight does not predict hold or reversal size; whatever touch-rate effect shows up is largely an artifact of how often a level sits close to the session open. This is a reference map, not a forecast.</p>
+  <p class="note">* CONFLUENCE = summed weight of the techniques that overlap at this level (factual overlap count, NOT a probability). SOURCE = the strongest contributing technique.</p>
+  <p class="note" style="font-style:italic">Methodology note — per-zone hit-rate and hold-rate are intentionally omitted. Confluence weight does not predict hold or reversal size; whatever touch-rate effect shows up is largely an artifact of how often a level sits close to the session open. This is a reference map, not a forecast.</p>
   <p class="note" style="font-style:italic">Use these as a reference only. Decide your own position size, stop, and rules.</p>
   <p class="note" style="font-style:italic">Not investment advice. Built for personal research and backtesting.</p>
-  <p class="note" id="todayGap" style="font-weight:600"></p>
 </section>
 
 <!-- ROW 3: Session Recap + Match Check -->
 <section class="dash">
 
-  <!-- SESSION RECAP -->
   <div class="card">
     <div class="toolbar">
       <h3>SESSION RECAP — <span class="muted" id="recapDate">—</span> <span class="muted">(actuals)</span></h3>
@@ -215,16 +230,12 @@ header button:hover{background:#fff3}
     </div>
     <div class="muted" id="recapMeta" style="font-size:12px;margin-bottom:8px"></div>
     <table class="recap-table" id="recapTable">
-      <thead>
-      <tr><th>ZONE</th><th>LEVEL</th><th>RANGE</th><th>RESULT</th></tr>
-      </thead>
+      <thead><tr><th>ZONE</th><th>LEVEL</th><th>RANGE</th><th>RESULT</th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="note" id="recapCommentary"></p>
-    <p class="muted" style="font-size:11px;margin-top:6px"><em>This section auto-updates from Tracking &amp; ZoneLog when new session data is added</em></p>
   </div>
 
-  <!-- MATCH CHECK -->
   <div class="card">
     <h3 id="matchTitle">MATCH CHECK — <span class="muted" id="matchDate">—</span></h3>
     <table class="match-table" id="matchTable">
@@ -239,7 +250,7 @@ header button:hover{background:#fff3}
   </div>
 </section>
 
-<!-- ROW 4: GIFT NIFTY strip -->
+<!-- ROW 4: GIFT NIFTY -->
 <section class="card" style="font-size:13px">
   <h3 style="font-size:13px">GIFT NIFTY — INDICATIVE OPEN (overnight futures reference)</h3>
   <div class="gift">
@@ -257,24 +268,13 @@ header button:hover{background:#fff3}
       <div class="gift-trail" id="giftDelta">—</div>
     </div>
   </div>
-  <p class="note" style="margin-top:8px;font-style:italic">⚠ GIFT Nifty is an overseas-futures reference, not the NSE spot open. The 9:15 open can move away from GIFT due to basis and the pre-open auction. This is a manual snapshot and will not auto-refresh.</p>
+  <p class="note" style="margin-top:8px;font-style:italic">⚠ GIFT Nifty is an overseas-futures reference, not the NSE spot open. The 9:15 open can differ due to basis and the pre-open auction. Snapshot is entered manually and will not auto-refresh.</p>
 </section>
 
 <!-- ROW 5: ACTUAL OPEN -->
 <section class="card" style="padding:12px 16px;background:#fffbe9;border-color:#f1dfb6">
-  <div class="actual-open" id="actualOpen">ACTUAL OPEN (9:15 AM) — <span class="muted" style="font-weight:400">for the session in the zone table above is for</span></div>
+  <div class="actual-open" id="actualOpen">ACTUAL OPEN (9:15 AM) — <span class="muted" style="font-weight:400"></span></div>
 </section>
-
-<!-- TOKEN notice (collapsed at bottom) -->
-<div class="card" id="tokenCard" style="display:none;background:#fff4df;border-color:#f1cd83;color:#704b00">
-  <b id="tokenTitle"></b>
-  <div id="tokenMessage" style="margin-top:6px"></div>
-  <div style="margin-top:8px">
-    <input id="dailyToken" type="password" placeholder="Paste today's broker access token"
-           style="padding:8px;width:min(420px,80%);border:1px solid #c8d1df;border-radius:7px;font:inherit">
-    <button onclick="saveToken()" style="background:#a76c00;color:#fff;border:0;padding:8px 12px;border-radius:7px;cursor:pointer">Update token</button>
-  </div>
-</div>
 
 <p class="muted" style="text-align:center;font-size:11px;margin-top:30px">
   Generated by ZoneApp · Data updates nightly · Not investment advice
@@ -282,64 +282,81 @@ header button:hover{background:#fff3}
 
 </main>
 
+<!-- GIFT NIFTY modal (admin only) -->
+<div class="modal-back" id="giftModal">
+  <div class="modal">
+    <h3>Update GIFT Nifty snapshot</h3>
+    <p class="muted" style="font-size:12px;margin:0">Capture the current GIFT Nifty futures LTP and the prior NSE close (PDC). The dashboard will display indicative open and gap %.</p>
+    <form id="giftForm" onsubmit="return submitGift(event)">
+      <label>GIFT Nifty LTP</label>
+      <input id="giftInputLtp" type="number" step="0.05" min="0" required>
+      <label>Prior NSE close (PDC)</label>
+      <input id="giftInputPdc" type="number" step="0.05" min="0" required>
+      <div class="muted" style="font-size:11px;margin-top:8px" id="giftHint">Calculated: gap (pts) and gap % shown live below.</div>
+      <div class="row">
+        <button type="button" class="ghost" onclick="hideGiftDialog()">Cancel</button>
+        <button type="submit" class="primary">Save snapshot</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script>
-const api = async (u, o = {}) => {
-  const r = await fetch(u, o);
-  if (r.status === 401) { location = '/login'; return; }
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.detail || 'Request failed');
-  return d;
-};
-const num = (n) => (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:0, maximumFractionDigits:2});
+// Both anonymous visitors and logged-in users land here. We pick the
+// right /api/dashboard endpoint based on whether the auth probe succeeds.
+let authState = { ok: false, role: null, username: null, can_edit: false };
+
+async function probeAuth() {
+  try {
+    const r = await fetch('/api/me', { credentials: 'same-origin' });
+    if (!r.ok) return false;
+    const d = await r.json();
+    authState = { ok: true, role: d.role, username: d.display_name, can_edit: d.role === 'admin' };
+    return true;
+  } catch (_) { return false; }
+}
+
+async function api(u, o = {}) {
+  const r = await fetch(u, { credentials: 'same-origin', ...o });
+  if (r.status === 401) return null;
+  if (!r.ok) throw new Error((await r.json()).detail || 'Request failed');
+  return r.json();
+}
+
+const num = (n) => (+n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const pct = (n) => (n === null || n === undefined) ? '–' : (+n).toFixed(1) + '%';
 
-let myBroker = null;
-
-async function initMe() {
-  const me = await api('/api/me');
-  document.getElementById('userName').textContent = me.display_name;
-}
-
-async function loadBroker() {
-  try {
-    const b = await api('/api/my/broker');
-    myBroker = b;
-    const card = document.getElementById('tokenCard');
-    if (!b.assigned) {
-      card.style.display = 'block';
-      card.style.background = '#fff0f0';
-      card.style.borderColor = '#efb1b1';
-      card.style.color = '#9f1d1d';
-      card.querySelector('#tokenTitle').textContent = 'No broker assigned';
-      card.querySelector('#tokenMessage').textContent = b.notification;
-      card.querySelector('#dailyToken').style.display = 'none';
-      card.querySelector('button').style.display = 'none';
-    } else if (b.token_status !== 'valid') {
-      card.style.display = 'block';
-      card.querySelector('#tokenTitle').textContent = 'Broker token action required';
-      card.querySelector('#tokenMessage').textContent = b.notification;
+function applyAuthUI() {
+  const badge = document.getElementById('authBadge');
+  const adminBtn = document.getElementById('adminBtn');
+  const signoutBtn = document.getElementById('signoutBtn');
+  const loginLink = document.getElementById('loginLink');
+  const anonBanner = document.getElementById('anonBanner');
+  const adminControls = document.getElementById('adminControls');
+  if (authState.ok) {
+    badge.textContent = `${authState.role}: ${authState.username}`;
+    badge.title = `Signed in as ${authState.username}`;
+    badge.style.display = 'inline-block';
+    signoutBtn.style.display = 'inline-block';
+    loginLink.style.display = 'none';
+    if (authState.can_edit) {
+      adminBtn.style.display = 'inline-block';
+      adminControls.style.display = 'flex';
     }
-  } catch (e) { console.warn(e); }
+    anonBanner.style.display = 'none';
+  } else {
+    badge.style.display = 'none';
+    adminBtn.style.display = 'none';
+    signoutBtn.style.display = 'none';
+    loginLink.style.display = 'inline-block';
+    adminControls.style.display = 'none';
+    anonBanner.style.display = 'flex';
+  }
 }
 
-async function saveToken() {
-  if (!myBroker) return;
-  const v = document.getElementById('dailyToken').value.trim();
-  if (!v) return;
-  document.getElementById('tokenMessage').textContent = 'Checking and saving token…';
-  const r = await fetch(`/api/brokers/${myBroker.id}/token`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({access_token: v})
-  });
-  const d = await r.json();
-  if (!r.ok) {
-    document.getElementById('tokenMessage').textContent = d.detail || 'Token update failed';
-    return;
-  }
-  document.getElementById('dailyToken').value = '';
-  await load();
-  document.getElementById('tokenCard').style.display = 'none';
+async function signout() {
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  location.reload();
 }
 
 function renderZones(zones, basis) {
@@ -356,7 +373,7 @@ function renderZones(zones, basis) {
   caption.innerHTML = `<span class="muted" style="font-weight:500;font-size:13px">(basis: <b>${fmtDate}</b>) for next day</span>`;
   basisEl.innerHTML = `Basis <b>${fmtDate}</b> · H ${num(basis.high)} · L ${num(basis.low)} · C ${num(basis.close)} · Range ${basis.range_pct}% · <b>${zones.day_type || 'NORMAL'} CPR</b>`;
   tb.innerHTML = (zones.rows || []).map(z => {
-    const kind = z.kind;  // R / S / AT
+    const kind = z.kind;
     const cls = kind === 'R' ? 'R' : kind === 'S' ? 'S' : 'AT';
     const rowCls = kind === 'AT' ? 'AT-row' : '';
     const distSign = z.dist_from_pdc >= 0 ? '+' : '';
@@ -392,8 +409,8 @@ function renderCpr(matrix, basisZones) {
   const match = today ? matrix.rows.find(r => r.group === today) : null;
   let commentary = '';
   if (today) {
-    const txt = match ? `${match.n} sessions ... ${match.trend_day_pct ?? '-'}% trend-day, ${match.fill_pct ?? '-'}% gap-fill` : '';
-    commentary = `${today}-CPR basis is expected to be <b>${today}</b>. Historically, ${txt}. Trend-day odds rise as CPR type widens here, so NARROW does not seem to act as a breakout predictor on this sample.`;
+    const txt = match ? `${match.n}-session baseline ${match.trend_day_pct ?? '-'}% trend-day, ${match.fill_pct ?? '-'}% gap-fill` : '';
+    commentary = `${today}-CPR basis is expected to be <b>${today}</b>. ${txt}. Trend-day odds rise with CPR width on this sample — NARROW does not act as a breakout predictor here.`;
   } else {
     commentary = 'CPR type expected once a basis day is available. Reference probabilities over the stored sample.';
   }
@@ -404,13 +421,9 @@ function renderGap(gap) {
   const map = {};
   (gap.rows || []).forEach(r => { map[r.bucket_label] = r; });
   const byId = {
-    'gapLess01': map['0-0.1'],
-    'gap0102':   map['0.1-0.2'],
-    'gap0203':   map['0.2-0.3'],
-    'gap0304':   map['0.3-0.45'],
-    'gap0406':   map['0.45-0.6'],
-    'gap0609':   map['0.6-0.9'],
-    'gapGt09':   map['>0.9'],
+    'gapLess01': map['0-0.1'], 'gap0102': map['0.1-0.2'], 'gap0203': map['0.2-0.3'],
+    'gap0304': map['0.3-0.45'], 'gap0406': map['0.45-0.6'],
+    'gap0609': map['0.6-0.9'], 'gapGt09': map['>0.9'],
   };
   Object.entries(byId).forEach(([id, r]) => {
     const el = document.getElementById(id);
@@ -455,7 +468,7 @@ function renderMatch(m) {
     document.getElementById('matchCommentary').textContent = '';
     return;
   }
-  document.getElementById('matchDate').textContent = ' ' + String(m.date || m.session_date || m.target_date || '').slice(0,10);
+  document.getElementById('matchDate').textContent = ' ' + String(m.date || '').slice(0,10);
   document.getElementById('mcBasisCpr').textContent = m.basis_cpr_type;
   document.getElementById('mcCprTail').textContent = `(${m.basis_cpr_type} CPR)`;
   document.getElementById('mcCprFillTail').textContent = `(${m.basis_cpr_type} CPR)`;
@@ -472,8 +485,7 @@ function renderCheck(zones, recap, basis) {
     cs.className = 'badge warn';
     return;
   }
-  const fmtBasis = String(basis.date).slice(0,10);
-  const fmtRecap = String(recap.date).slice(0,10);
+  const fmtBasis = String(basis.date).slice(0, 10);
   cs.textContent = `Check: Last Tracking=${fmtBasis} | Basis=${fmtBasis} — OK`;
   cs.className = 'badge ok';
 }
@@ -483,7 +495,7 @@ function renderGift(gift) {
   const pdcEl = document.getElementById('giftPdc');
   const deltaEl = document.getElementById('giftDelta');
   if (!gift || !gift.ltp) {
-    ltpEl.textContent = 'submitted by admin';
+    ltpEl.textContent = 'not entered yet';
     pdcEl.textContent = '(awaiting admin input)';
     deltaEl.textContent = '—';
     document.getElementById('giftCaptured').textContent = '';
@@ -497,48 +509,105 @@ function renderGift(gift) {
   document.getElementById('giftCaptured').textContent = gift.captured_at ? `captured ${gift.captured_at}` : '';
 }
 
+function renderAdminMetrics(s) {
+  document.getElementById('adminBars').textContent = num(s?.bars ?? 0);
+  document.getElementById('adminSessions').textContent = num(s?.sessions ?? 0);
+  document.getElementById('adminZones').textContent = num(s?.zone_obs ?? 0);
+}
+
 async function load() {
+  // Anon path → /api/dashboard/public, auth path → /api/dashboard
+  const endpoint = authState.ok ? '/api/dashboard' : '/api/dashboard/public';
   let payload;
   try {
-    payload = await api('/api/dashboard');
+    payload = await api(endpoint);
+    if (!payload) payload = await api('/api/dashboard/public');
+    if (!payload) throw new Error('Unable to load dashboard data');
   } catch (e) {
     document.querySelector('main').innerHTML = `<div class="err">${e.message}</div>`;
     return;
   }
   document.title = (payload.symbol || 'NIFTY 50') + ' — Trading Levels · ZoneApp';
+  document.getElementById('titleBar').textContent = (payload.symbol || 'NIFTY 50') + ' — TRADING LEVELS & ANALYTICS DASHBOARD';
   renderZones(payload.zones, payload.zones.basis);
   renderCpr(payload.cpr_matrix, payload.zones);
   renderGap(payload.gap_guide);
   renderRecap(payload.session_recap);
-  const basisDate = payload.zones && payload.zones.basis ? payload.zones.basis.date : null;
   renderMatch(payload.match_check);
   renderCheck(payload.zones, payload.session_recap, payload.zones.basis);
   renderGift(payload.gift_nifty);
+  const basisDate = payload.zones && payload.zones.basis ? payload.zones.basis.date : null;
   const today = basisDate ? new Date(basisDate + 'T00:00:00') : new Date();
   today.setDate(today.getDate() + 1);
-  const human = today.toLocaleDateString('en-IN', {day: '2-digit', month: 'long', year: 'numeric'});
+  const human = today.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
   document.getElementById('actualOpen').innerHTML =
     `ACTUAL OPEN (9:15 AM) — <span class="muted" style="font-weight:400">for the session in the zone table above is for ${human}</span>`;
+
+  // Admin metrics chip-row (uses the existing /api/health endpoint)
+  if (authState.can_edit) {
+    const h = await api('/api/health');
+    if (h) renderAdminMetrics(h);
+  }
+
+  // Show token banner for clients/admin only — going to be cleaner with broker status
+  if (authState.ok) {
+    const b = await api('/api/my/broker');
+    if (b && b.assigned && b.token_status !== 'valid') {
+      document.getElementById('tokenBanner').style.display = 'flex';
+      document.getElementById('tMsg').textContent = b.notification;
+    } else {
+      document.getElementById('tokenBanner').style.display = 'none';
+    }
+  }
 }
 
+// GIFT Nifty modal helpers
+function showGiftDialog() {
+  if (!authState.can_edit) {
+    alert('Only admins can update the GIFT Nifty snapshot');
+    return;
+  }
+  document.getElementById('giftModal').classList.add('on');
+}
+function hideGiftDialog() {
+  document.getElementById('giftModal').classList.remove('on');
+}
+async function submitGift(ev) {
+  ev.preventDefault();
+  const ltp = parseFloat(document.getElementById('giftInputLtp').value);
+  const pdc = parseFloat(document.getElementById('giftInputPdc').value);
+  if (!(ltp > 0) || !(pdc > 0)) return false;
+  const r = await fetch('/api/admin/gift-nifty', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ltp, pdc }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    alert('Failed to save: ' + (err.detail || r.statusText));
+    return false;
+  }
+  hideGiftDialog();
+  await load();
+  return false;
+}
+
+// Recap date picker
 document.getElementById('recapDatePick').addEventListener('change', async (e) => {
   const date = e.target.value;
   if (!date) return;
-  const payload = await api('/api/dashboard?date=' + encodeURIComponent(date));
+  const endpoint = authState.ok ? '/api/dashboard' : '/api/dashboard/public';
+  const payload = await api(`${endpoint}?date=${encodeURIComponent(date)}`);
+  if (!payload) return;
   renderRecap(payload.session_recap);
   renderMatch(payload.match_check);
 });
 
-async function logout() {
-  await fetch('/api/auth/logout', {method:'POST'});
-  location = '/login';
-}
-
 (async () => {
-  await initMe();
-  await loadBroker();
+  await probeAuth();
+  applyAuthUI();
   await load();
-  // Refresh once a minute so the timestamp stays current
   setInterval(load, 60_000);
 })();
 </script>
