@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'backend'))
 
+import app  # noqa: F401  — loads backend/.env so DATABASE_URL is available
 from app.db import Store
 
 
@@ -49,14 +50,18 @@ def health_check(store: Store, symbol: str) -> list:
 
 
 if __name__ == '__main__':
-    db = os.environ.get('DATABASE_URL')
-    symbol = os.environ.get('ZONEAPP_SYMBOL', 'NSE:NIFTY50-INDEX')
-    store = Store(db)
-    issues = health_check(store, symbol)
-    if issues:
-        print(f"HEALTH CHECK: {len(issues)} issue(s) found")
-        for i in issues:
-            print(f"  - {i}")
+    from app.symbols import all_symbols
+
+    store = Store(os.environ.get('DATABASE_URL'))
+    # Every tracked symbol is checked, not just the default one.
+    symbols = all_symbols(store)
+    found = []
+    for symbol in symbols:
+        found += [f"{symbol}: {issue}" for issue in health_check(store, symbol)]
+    if found:
+        print(f"HEALTH CHECK: {len(found)} issue(s) across {len(symbols)} symbol(s)")
+        for issue in found:
+            print(f"  - {issue}")
         sys.exit(1)
-    print("HEALTH CHECK: all clear")
+    print(f"HEALTH CHECK: all clear ({len(symbols)} symbol(s) checked)")
     sys.exit(0)

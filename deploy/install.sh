@@ -4,7 +4,7 @@
 set -euo pipefail
 APP_DIR=/opt/zoneapp
 if [ ! -f "$APP_DIR/.env" ]; then
-  echo "Missing $APP_DIR/.env. Copy backend/.env.example, set DATABASE_URL and all secrets, then rerun."
+  echo "Missing $APP_DIR/.env. Copy .env.example, set DATABASE_URL and all secrets, then rerun."
   exit 1
 fi
 apt-get update

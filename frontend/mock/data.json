@@ -1,0 +1,1180 @@
+{
+ "me": {
+  "id": 1,
+  "username": "admin",
+  "display_name": "Administrator",
+  "role": "admin",
+  "symbol": "NSE:NIFTY50-INDEX",
+  "active": true
+ },
+ "health": {
+  "ok": true,
+  "symbol": "NSE:NIFTY50-INDEX",
+  "bars": 182450,
+  "sessions": 523,
+  "zone_observations": 4238,
+  "server_time": "2026-08-21T09:42:11+05:30",
+  "broker": "Main Fyers account"
+ },
+ "dashboard": {
+  "server_time": "2026-08-21T04:12:11Z",
+  "symbol": "NSE:NIFTY50-INDEX",
+  "zones": {
+   "basis": {
+    "date": "2026-08-20",
+    "high": 24961.05,
+    "low": 24741.6,
+    "close": 24836.3,
+    "range_pct": 0.88,
+    "cpr_pct": 0.212
+   },
+   "day_type": "NORMAL",
+   "rows": [
+    {
+     "label": "R4",
+     "lo": 25327,
+     "hi": 25357,
+     "key": 25342.0,
+     "key_name": "CamR4",
+     "weight": 1.68,
+     "stars": 4,
+     "kind": "R",
+     "dist_from_pdc": 505.7,
+     "touch_pct": 71.4,
+     "hold_pct": 64.9
+    },
+    {
+     "label": "R3",
+     "lo": 25173,
+     "hi": 25203,
+     "key": 25188.0,
+     "key_name": "Round 100",
+     "weight": 1.26,
+     "stars": 3,
+     "kind": "R",
+     "dist_from_pdc": 351.7,
+     "touch_pct": 58.2,
+     "hold_pct": 61.3
+    },
+    {
+     "label": "R2",
+     "lo": 25027,
+     "hi": 25057,
+     "key": 25042.0,
+     "key_name": "PDH+CamR3",
+     "weight": 2.1,
+     "stars": 5,
+     "kind": "R",
+     "dist_from_pdc": 205.7,
+     "touch_pct": 83.9,
+     "hold_pct": 66.4
+    },
+    {
+     "label": "R1",
+     "lo": 24946,
+     "hi": 24976,
+     "key": 24961.0,
+     "key_name": "PDH",
+     "weight": 1.68,
+     "stars": 4,
+     "kind": "R",
+     "dist_from_pdc": 124.7,
+     "touch_pct": 71.4,
+     "hold_pct": 64.9
+    },
+    {
+     "label": "AT",
+     "lo": 24865,
+     "hi": 24895,
+     "key": 24880.0,
+     "key_name": "PP",
+     "weight": 1.26,
+     "stars": 3,
+     "kind": "AT",
+     "dist_from_pdc": 43.7,
+     "touch_pct": 58.2,
+     "hold_pct": 61.3
+    },
+    {
+     "label": "S1",
+     "lo": 24726,
+     "hi": 24756,
+     "key": 24741.0,
+     "key_name": "PDL",
+     "weight": 2.1,
+     "stars": 5,
+     "kind": "S",
+     "dist_from_pdc": -95.3,
+     "touch_pct": 83.9,
+     "hold_pct": 66.4
+    },
+    {
+     "label": "S2",
+     "lo": 24605,
+     "hi": 24635,
+     "key": 24620.0,
+     "key_name": "CamS3",
+     "weight": 1.68,
+     "stars": 4,
+     "kind": "S",
+     "dist_from_pdc": -216.3,
+     "touch_pct": 71.4,
+     "hold_pct": 64.9
+    },
+    {
+     "label": "S3",
+     "lo": 24485,
+     "hi": 24515,
+     "key": 24500.0,
+     "key_name": "Round 100",
+     "weight": 1.26,
+     "stars": 3,
+     "kind": "S",
+     "dist_from_pdc": -336.3,
+     "touch_pct": 58.2,
+     "hold_pct": 61.3
+    },
+    {
+     "label": "S4",
+     "lo": 24365,
+     "hi": 24395,
+     "key": 24380.0,
+     "key_name": "CamS4",
+     "weight": 0.84,
+     "stars": 2,
+     "kind": "S",
+     "dist_from_pdc": -456.3,
+     "touch_pct": 44.9,
+     "hold_pct": 58.7
+    }
+   ]
+  },
+  "cpr_matrix": {
+   "rows": [
+    {
+     "group": "NARROW",
+     "n": 172,
+     "trend_day_pct": 44.8,
+     "fill_pct": 71.5,
+     "up_day_pct": 52.3,
+     "avg_range_pct": 1.02,
+     "avg_gap_pct": 0.31
+    },
+    {
+     "group": "NORMAL",
+     "n": 231,
+     "trend_day_pct": 31.6,
+     "fill_pct": 79.2,
+     "up_day_pct": 50.6,
+     "avg_range_pct": 0.88,
+     "avg_gap_pct": 0.24
+    },
+    {
+     "group": "WIDE",
+     "n": 120,
+     "trend_day_pct": 24.2,
+     "fill_pct": 84.2,
+     "up_day_pct": 49.2,
+     "avg_range_pct": 0.74,
+     "avg_gap_pct": 0.19
+    }
+   ],
+   "total_sample": 523,
+   "note": "Values computed on your stored sample."
+  },
+  "gap_guide": {
+   "rows": [
+    {
+     "bucket_label": "0-0.1",
+     "bucket_lo": 0,
+     "bucket_hi": 0.1,
+     "n": 148,
+     "fill_pct": 94.6
+    },
+    {
+     "bucket_label": "0.1-0.2",
+     "bucket_lo": 0.1,
+     "bucket_hi": 0.2,
+     "n": 112,
+     "fill_pct": 88.4
+    },
+    {
+     "bucket_label": "0.2-0.3",
+     "bucket_lo": 0.2,
+     "bucket_hi": 0.3,
+     "n": 84,
+     "fill_pct": 79.8
+    },
+    {
+     "bucket_label": "0.3-0.45",
+     "bucket_lo": 0.3,
+     "bucket_hi": 0.45,
+     "n": 71,
+     "fill_pct": 68.5
+    },
+    {
+     "bucket_label": "0.45-0.6",
+     "bucket_lo": 0.45,
+     "bucket_hi": 0.6,
+     "n": 44,
+     "fill_pct": 56.8
+    },
+    {
+     "bucket_label": "0.6-0.9",
+     "bucket_lo": 0.6,
+     "bucket_hi": 0.9,
+     "n": 38,
+     "fill_pct": 44.7
+    },
+    {
+     "bucket_label": ">0.9",
+     "bucket_lo": 0.9,
+     "bucket_hi": 999,
+     "n": 26,
+     "fill_pct": 30.8
+    }
+   ],
+   "total_sample": 523,
+   "total_gaps": 523
+  },
+  "session_recap": {
+   "date": "2026-08-20",
+   "basis": {
+    "date": "2026-08-19",
+    "high": 24902.4,
+    "low": 24688.1,
+    "close": 24771.05,
+    "range_pct": 0.87
+   },
+   "actuals": {
+    "date": "2026-08-20",
+    "open": 24812.4,
+    "high": 24961.05,
+    "low": 24741.6,
+    "close": 24836.3,
+    "change_pct": 0.26,
+    "gap_pct": 0.17,
+    "day_type": "NORMAL",
+    "prev_close": 24771.05,
+    "prev_high": 24902.4,
+    "prev_low": 24688.1,
+    "range_pct": 0.88
+   },
+   "zones": [
+    {
+     "label": "R4",
+     "lo": 25327,
+     "hi": 25357,
+     "key": 25342.0,
+     "key_name": "CamR4",
+     "stars": 4,
+     "weight": 1.68,
+     "members": "CamR4",
+     "result": "TOUCHED"
+    },
+    {
+     "label": "R3",
+     "lo": 25173,
+     "hi": 25203,
+     "key": 25188.0,
+     "key_name": "Round 100",
+     "stars": 3,
+     "weight": 1.26,
+     "members": "Round 100",
+     "result": "NOT REACHED"
+    },
+    {
+     "label": "R2",
+     "lo": 25027,
+     "hi": 25057,
+     "key": 25042.0,
+     "key_name": "PDH+CamR3",
+     "stars": 5,
+     "weight": 2.1,
+     "members": "PDH+CamR3",
+     "result": "BROKE"
+    },
+    {
+     "label": "R1",
+     "lo": 24946,
+     "hi": 24976,
+     "key": 24961.0,
+     "key_name": "PDH",
+     "stars": 4,
+     "weight": 1.68,
+     "members": "PDH",
+     "result": "HELD"
+    },
+    {
+     "label": "AT",
+     "lo": 24865,
+     "hi": 24895,
+     "key": 24880.0,
+     "key_name": "PP",
+     "stars": 3,
+     "weight": 1.26,
+     "members": "PP",
+     "result": "HELD"
+    },
+    {
+     "label": "S1",
+     "lo": 24726,
+     "hi": 24756,
+     "key": 24741.0,
+     "key_name": "PDL",
+     "stars": 5,
+     "weight": 2.1,
+     "members": "PDL",
+     "result": "HELD"
+    },
+    {
+     "label": "S2",
+     "lo": 24605,
+     "hi": 24635,
+     "key": 24620.0,
+     "key_name": "CamS3",
+     "stars": 4,
+     "weight": 1.68,
+     "members": "CamS3",
+     "result": "TOUCHED"
+    },
+    {
+     "label": "S3",
+     "lo": 24485,
+     "hi": 24515,
+     "key": 24500.0,
+     "key_name": "Round 100",
+     "stars": 3,
+     "weight": 1.26,
+     "members": "Round 100",
+     "result": "HELD"
+    },
+    {
+     "label": "S4",
+     "lo": 24365,
+     "hi": 24395,
+     "key": 24380.0,
+     "key_name": "CamS4",
+     "stars": 2,
+     "weight": 0.84,
+     "members": "CamS4",
+     "result": "NOT REACHED"
+    }
+   ],
+   "commentary": "Up 0.26% close-to-close; gapped up 0.17% from prior close. Of 9 S/R zones, 5 touched \u00b7 3 held \u00b7 1 broke. Basis CPR was NORMAL."
+  },
+  "match_check": {
+   "basis_cpr_type": "NORMAL",
+   "base_row": {
+    "group": "NORMAL",
+    "n": 231,
+    "trend_day_pct": 31.6,
+    "fill_pct": 79.2,
+    "up_day_pct": 50.6,
+    "avg_range_pct": 0.88,
+    "avg_gap_pct": 0.24
+   },
+   "actual": {
+    "trend_day": false,
+    "filled": true,
+    "fill_distance_pct": 0.26
+   },
+   "verdict": "non-trend day \u00b7 Gap FILLED (0.26% from PDC)",
+   "commentary": "NORMAL CPR type: trend-day 31.6%, gap-fill 79.2% historically. Actual: non-trend day \u00b7 Gap FILLED."
+  },
+  "gift_nifty": {
+   "ltp": 24902.5,
+   "pdc": 24836.3,
+   "gap_pts": 66.2,
+   "gap_pct": 0.27,
+   "captured_at": "2026-08-21T03:15:00Z",
+   "symbol": "GIFT NIFTY"
+  }
+ },
+ "stats_zones": {
+  "n": 3022,
+  "sessions": 523,
+  "by_stars": [
+   {
+    "group": "1",
+    "n": 412,
+    "touch_pct": 31.6,
+    "bounce_pct": 60.2,
+    "break_pct": 39.8,
+    "hold_pct": 55.1
+   },
+   {
+    "group": "2",
+    "n": 688,
+    "touch_pct": 44.9,
+    "bounce_pct": 63.4,
+    "break_pct": 36.6,
+    "hold_pct": 58.7
+   },
+   {
+    "group": "3",
+    "n": 910,
+    "touch_pct": 58.2,
+    "bounce_pct": 65.1,
+    "break_pct": 34.9,
+    "hold_pct": 61.3
+   },
+   {
+    "group": "4",
+    "n": 624,
+    "touch_pct": 71.4,
+    "bounce_pct": 67.8,
+    "break_pct": 32.2,
+    "hold_pct": 64.9
+   },
+   {
+    "group": "5",
+    "n": 388,
+    "touch_pct": 83.9,
+    "bounce_pct": 69.2,
+    "break_pct": 30.8,
+    "hold_pct": 66.4
+   }
+  ],
+  "by_side": [
+   {
+    "group": "R",
+    "n": 1290,
+    "touch_pct": 57.4,
+    "bounce_pct": 64.1,
+    "break_pct": 35.9,
+    "hold_pct": 60.2
+   },
+   {
+    "group": "S",
+    "n": 1310,
+    "touch_pct": 60.8,
+    "bounce_pct": 66.9,
+    "break_pct": 33.1,
+    "hold_pct": 63.5
+   },
+   {
+    "group": "AT",
+    "n": 422,
+    "touch_pct": 74.2,
+    "bounce_pct": 62.0,
+    "break_pct": 38.0,
+    "hold_pct": 57.8
+   }
+  ],
+  "by_day_type": [
+   {
+    "group": "NARROW",
+    "n": 980,
+    "touch_pct": 66.2,
+    "bounce_pct": 61.4,
+    "break_pct": 38.6,
+    "hold_pct": 57.2
+   },
+   {
+    "group": "NORMAL",
+    "n": 1230,
+    "touch_pct": 58.9,
+    "bounce_pct": 65.7,
+    "break_pct": 34.3,
+    "hold_pct": 62.1
+   },
+   {
+    "group": "WIDE",
+    "n": 812,
+    "touch_pct": 49.7,
+    "bounce_pct": 68.9,
+    "break_pct": 31.1,
+    "hold_pct": 65.8
+   }
+  ],
+  "by_open_pos": [
+   {
+    "group": "INSIDE BAND",
+    "n": 2210,
+    "touch_pct": 61.5,
+    "bounce_pct": 65.8,
+    "break_pct": 34.2,
+    "hold_pct": 62.4
+   },
+   {
+    "group": "BELOW ALL S",
+    "n": 430,
+    "touch_pct": 52.1,
+    "bounce_pct": 59.3,
+    "break_pct": 40.7,
+    "hold_pct": 54.6
+   },
+   {
+    "group": "ABOVE ALL R",
+    "n": 382,
+    "touch_pct": 54.8,
+    "bounce_pct": 61.1,
+    "break_pct": 38.9,
+    "hold_pct": 56.9
+   }
+  ],
+  "baseline_note": "Random-line baseline on this dataset was ~62% bounce-on-touch. Compare against 62, not 50."
+ },
+ "stats_days": {
+  "n": 521,
+  "first_date": "2024-03-04",
+  "last_date": "2026-08-20",
+  "gap_fill": [
+   {
+    "bucket": "0-0.1",
+    "n": 148,
+    "fill_pct": 94.6,
+    "trend_pct": 18.2,
+    "avg_range_pct": 0.71
+   },
+   {
+    "bucket": "0.1-0.2",
+    "n": 112,
+    "fill_pct": 88.4,
+    "trend_pct": 24.1,
+    "avg_range_pct": 0.78
+   },
+   {
+    "bucket": "0.2-0.3",
+    "n": 84,
+    "fill_pct": 79.8,
+    "trend_pct": 31.0,
+    "avg_range_pct": 0.86
+   },
+   {
+    "bucket": "0.3-0.45",
+    "n": 71,
+    "fill_pct": 68.5,
+    "trend_pct": 38.0,
+    "avg_range_pct": 0.95
+   },
+   {
+    "bucket": "0.45-0.6",
+    "n": 44,
+    "fill_pct": 56.8,
+    "trend_pct": 46.6,
+    "avg_range_pct": 1.08
+   },
+   {
+    "bucket": "0.6-0.9",
+    "n": 38,
+    "fill_pct": 44.7,
+    "trend_pct": 55.3,
+    "avg_range_pct": 1.24
+   },
+   {
+    "bucket": ">0.9",
+    "n": 26,
+    "fill_pct": 30.8,
+    "trend_pct": 65.4,
+    "avg_range_pct": 1.62
+   }
+  ],
+  "day_type": [
+   {
+    "group": "NARROW",
+    "n": 172,
+    "trend_pct": 44.8,
+    "fill_pct": 71.5,
+    "up_pct": 52.3,
+    "avg_range_pct": 1.02
+   },
+   {
+    "group": "NORMAL",
+    "n": 231,
+    "trend_pct": 31.6,
+    "fill_pct": 79.2,
+    "up_pct": 50.6,
+    "avg_range_pct": 0.88
+   },
+   {
+    "group": "WIDE",
+    "n": 120,
+    "trend_pct": 24.2,
+    "fill_pct": 84.2,
+    "up_pct": 49.2,
+    "avg_range_pct": 0.74
+   }
+  ],
+  "weekday": [
+   {
+    "group": "Mon",
+    "n": 104,
+    "trend_pct": 36.5,
+    "fill_pct": 76.9,
+    "up_pct": 51.0,
+    "avg_range_pct": 0.92
+   },
+   {
+    "group": "Tue",
+    "n": 107,
+    "trend_pct": 33.6,
+    "fill_pct": 78.5,
+    "up_pct": 53.3,
+    "avg_range_pct": 0.89
+   },
+   {
+    "group": "Wed",
+    "n": 106,
+    "trend_pct": 31.1,
+    "fill_pct": 80.2,
+    "up_pct": 49.1,
+    "avg_range_pct": 0.87
+   },
+   {
+    "group": "Thu",
+    "n": 105,
+    "trend_pct": 38.1,
+    "fill_pct": 74.3,
+    "up_pct": 50.5,
+    "avg_range_pct": 0.98
+   },
+   {
+    "group": "Fri",
+    "n": 101,
+    "trend_pct": 34.7,
+    "fill_pct": 77.2,
+    "up_pct": 48.5,
+    "avg_range_pct": 0.9
+   }
+  ],
+  "caveat": "Weekday numbers mix in expiry-day effects and have small n per weekday."
+ },
+ "sessions": [
+  {
+   "date": "2026-08-20",
+   "day_type": "NARROW",
+   "gap_pct": -0.66,
+   "open_pos": "BELOW ALL S",
+   "touched": 2,
+   "held": 1,
+   "broke": 0
+  },
+  {
+   "date": "2026-08-19",
+   "day_type": "WIDE",
+   "gap_pct": -0.12,
+   "open_pos": "ABOVE ALL R",
+   "touched": 2,
+   "held": 1,
+   "broke": 0
+  },
+  {
+   "date": "2026-08-18",
+   "day_type": "WIDE",
+   "gap_pct": 0.14,
+   "open_pos": "INSIDE BAND",
+   "touched": 3,
+   "held": 0,
+   "broke": 1
+  },
+  {
+   "date": "2026-08-17",
+   "day_type": "NORMAL",
+   "gap_pct": -0.13,
+   "open_pos": "ABOVE ALL R",
+   "touched": 2,
+   "held": 4,
+   "broke": 2
+  },
+  {
+   "date": "2026-08-14",
+   "day_type": "WIDE",
+   "gap_pct": 0.51,
+   "open_pos": "INSIDE BAND",
+   "touched": 2,
+   "held": 4,
+   "broke": 1
+  },
+  {
+   "date": "2026-08-13",
+   "day_type": "NORMAL",
+   "gap_pct": -0.64,
+   "open_pos": "ABOVE ALL R",
+   "touched": 2,
+   "held": 4,
+   "broke": 0
+  },
+  {
+   "date": "2026-08-12",
+   "day_type": "WIDE",
+   "gap_pct": -0.47,
+   "open_pos": "ABOVE ALL R",
+   "touched": 6,
+   "held": 3,
+   "broke": 2
+  },
+  {
+   "date": "2026-08-11",
+   "day_type": "NORMAL",
+   "gap_pct": 0.14,
+   "open_pos": "BELOW ALL S",
+   "touched": 4,
+   "held": 2,
+   "broke": 1
+  },
+  {
+   "date": "2026-08-10",
+   "day_type": "NARROW",
+   "gap_pct": 0.32,
+   "open_pos": "INSIDE BAND",
+   "touched": 2,
+   "held": 4,
+   "broke": 2
+  },
+  {
+   "date": "2026-08-07",
+   "day_type": "WIDE",
+   "gap_pct": -0.01,
+   "open_pos": "BELOW ALL S",
+   "touched": 7,
+   "held": 3,
+   "broke": 2
+  },
+  {
+   "date": "2026-08-06",
+   "day_type": "WIDE",
+   "gap_pct": 0.77,
+   "open_pos": "INSIDE BAND",
+   "touched": 6,
+   "held": 3,
+   "broke": 1
+  },
+  {
+   "date": "2026-08-05",
+   "day_type": "NORMAL",
+   "gap_pct": -0.56,
+   "open_pos": "BELOW ALL S",
+   "touched": 5,
+   "held": 0,
+   "broke": 0
+  },
+  {
+   "date": "2026-08-04",
+   "day_type": "WIDE",
+   "gap_pct": 0.12,
+   "open_pos": "BELOW ALL S",
+   "touched": 4,
+   "held": 2,
+   "broke": 3
+  },
+  {
+   "date": "2026-08-03",
+   "day_type": "WIDE",
+   "gap_pct": 0.48,
+   "open_pos": "INSIDE BAND",
+   "touched": 2,
+   "held": 2,
+   "broke": 3
+  },
+  {
+   "date": "2026-07-31",
+   "day_type": "WIDE",
+   "gap_pct": 0.26,
+   "open_pos": "INSIDE BAND",
+   "touched": 7,
+   "held": 2,
+   "broke": 3
+  },
+  {
+   "date": "2026-07-30",
+   "day_type": "NORMAL",
+   "gap_pct": 0.35,
+   "open_pos": "ABOVE ALL R",
+   "touched": 4,
+   "held": 0,
+   "broke": 3
+  },
+  {
+   "date": "2026-07-29",
+   "day_type": "NORMAL",
+   "gap_pct": -0.53,
+   "open_pos": "INSIDE BAND",
+   "touched": 5,
+   "held": 0,
+   "broke": 1
+  },
+  {
+   "date": "2026-07-28",
+   "day_type": "NORMAL",
+   "gap_pct": -0.59,
+   "open_pos": "INSIDE BAND",
+   "touched": 5,
+   "held": 3,
+   "broke": 3
+  },
+  {
+   "date": "2026-07-27",
+   "day_type": "NARROW",
+   "gap_pct": -0.53,
+   "open_pos": "BELOW ALL S",
+   "touched": 6,
+   "held": 2,
+   "broke": 1
+  },
+  {
+   "date": "2026-07-24",
+   "day_type": "NORMAL",
+   "gap_pct": 0.58,
+   "open_pos": "BELOW ALL S",
+   "touched": 7,
+   "held": 3,
+   "broke": 2
+  },
+  {
+   "date": "2026-07-23",
+   "day_type": "WIDE",
+   "gap_pct": 0.61,
+   "open_pos": "INSIDE BAND",
+   "touched": 3,
+   "held": 0,
+   "broke": 1
+  },
+  {
+   "date": "2026-07-22",
+   "day_type": "NARROW",
+   "gap_pct": -0.43,
+   "open_pos": "INSIDE BAND",
+   "touched": 2,
+   "held": 3,
+   "broke": 1
+  },
+  {
+   "date": "2026-07-21",
+   "day_type": "NORMAL",
+   "gap_pct": -0.35,
+   "open_pos": "INSIDE BAND",
+   "touched": 5,
+   "held": 4,
+   "broke": 2
+  },
+  {
+   "date": "2026-07-20",
+   "day_type": "WIDE",
+   "gap_pct": 0.11,
+   "open_pos": "INSIDE BAND",
+   "touched": 7,
+   "held": 4,
+   "broke": 0
+  },
+  {
+   "date": "2026-07-17",
+   "day_type": "NORMAL",
+   "gap_pct": 0.64,
+   "open_pos": "ABOVE ALL R",
+   "touched": 6,
+   "held": 3,
+   "broke": 3
+  },
+  {
+   "date": "2026-07-16",
+   "day_type": "NORMAL",
+   "gap_pct": -0.17,
+   "open_pos": "BELOW ALL S",
+   "touched": 7,
+   "held": 3,
+   "broke": 0
+  },
+  {
+   "date": "2026-07-15",
+   "day_type": "NARROW",
+   "gap_pct": -0.69,
+   "open_pos": "INSIDE BAND",
+   "touched": 5,
+   "held": 1,
+   "broke": 0
+  },
+  {
+   "date": "2026-07-14",
+   "day_type": "NORMAL",
+   "gap_pct": 0.16,
+   "open_pos": "INSIDE BAND",
+   "touched": 2,
+   "held": 4,
+   "broke": 1
+  },
+  {
+   "date": "2026-07-13",
+   "day_type": "WIDE",
+   "gap_pct": -0.64,
+   "open_pos": "BELOW ALL S",
+   "touched": 6,
+   "held": 0,
+   "broke": 0
+  },
+  {
+   "date": "2026-07-10",
+   "day_type": "NARROW",
+   "gap_pct": 0.18,
+   "open_pos": "INSIDE BAND",
+   "touched": 7,
+   "held": 2,
+   "broke": 2
+  }
+ ],
+ "my_broker": {
+  "assigned": true,
+  "id": 1,
+  "name": "Main Fyers account",
+  "broker_type": "fyers",
+  "enabled": true,
+  "token_updated_at": "2026-08-21T02:30:00Z",
+  "token_expires_at": "2026-08-21T18:30:00Z",
+  "token_status": "valid",
+  "notification": "Broker token is active until 21 Aug, 06:30 PM IST."
+ },
+ "clients": [
+  {
+   "id": 11,
+   "username": "rahul.k",
+   "display_name": "Rahul Kulkarni",
+   "symbol": "NSE:NIFTY50-INDEX",
+   "active": true,
+   "created_at": "2026-06-11T10:11:00Z",
+   "broker_id": 1,
+   "broker_name": "Main Fyers account"
+  },
+  {
+   "id": 12,
+   "username": "anita.s",
+   "display_name": "Anita Sharma",
+   "symbol": "NSE:NIFTYBANK-INDEX",
+   "active": true,
+   "created_at": "2026-05-02T08:20:00Z",
+   "broker_id": 1,
+   "broker_name": "Main Fyers account"
+  },
+  {
+   "id": 13,
+   "username": "vikram.d",
+   "display_name": "Vikram Desai",
+   "symbol": "MCX:CRUDEOIL25AUGFUT",
+   "active": false,
+   "created_at": "2026-04-18T12:05:00Z",
+   "broker_id": null,
+   "broker_name": null
+  },
+  {
+   "id": 14,
+   "username": "neha.p",
+   "display_name": "Neha Patil",
+   "symbol": "NSE:RELIANCE-EQ",
+   "active": true,
+   "created_at": "2026-03-22T09:45:00Z",
+   "broker_id": 2,
+   "broker_name": "Backup Fyers"
+  }
+ ],
+ "brokers": [
+  {
+   "id": 1,
+   "name": "Main Fyers account",
+   "broker_type": "fyers",
+   "resolutions": [
+    "1",
+    "5",
+    "15",
+    "30",
+    "60",
+    "D"
+   ],
+   "enabled": true,
+   "created_at": "2026-01-11T06:00:00Z",
+   "updated_at": "2026-08-21T02:30:00Z",
+   "token_updated_at": "2026-08-21T02:30:00Z",
+   "token_expires_at": "2026-08-21T18:30:00Z",
+   "token_status": "valid"
+  },
+  {
+   "id": 2,
+   "name": "Backup Fyers",
+   "broker_type": "fyers",
+   "resolutions": [
+    "15",
+    "D"
+   ],
+   "enabled": true,
+   "created_at": "2026-02-02T06:00:00Z",
+   "updated_at": "2026-08-19T02:30:00Z",
+   "token_updated_at": "2026-08-19T02:30:00Z",
+   "token_expires_at": "2026-08-19T18:30:00Z",
+   "token_status": "expired"
+  }
+ ],
+ "broker_types": [
+  {
+   "key": "fyers",
+   "label": "Fyers",
+   "token_ttl_hours": 16,
+   "fields": [
+    {
+     "name": "client_id",
+     "label": "Client ID",
+     "secret": false,
+     "required": true
+    },
+    {
+     "name": "secret_key",
+     "label": "Secret key",
+     "secret": true,
+     "required": true
+    },
+    {
+     "name": "access_token",
+     "label": "Access token",
+     "secret": false,
+     "required": false
+    }
+   ],
+   "defaults": {
+    "client_id": "937RN4D2JZ-100"
+   }
+  }
+ ],
+ "holidays": [
+  {
+   "holiday_date": "2026-10-02",
+   "label": "Gandhi Jayanti"
+  },
+  {
+   "holiday_date": "2026-08-15",
+   "label": "Independence Day"
+  }
+ ],
+ "instruments": [
+  {
+   "symbol": "NSE:NIFTY50-INDEX",
+   "name": "Nifty 50",
+   "segment": "NSE cash & indices"
+  },
+  {
+   "symbol": "NSE:NIFTYBANK-INDEX",
+   "name": "Nifty Bank",
+   "segment": "NSE cash & indices"
+  },
+  {
+   "symbol": "NSE:RELIANCE-EQ",
+   "name": "Reliance Industries",
+   "segment": "NSE cash & indices"
+  }
+ ],
+ "job_runs": [
+  {
+   "id": 3,
+   "job_date": "2026-08-21",
+   "broker_id": 1,
+   "broker_name": "Main Fyers account",
+   "symbol": "NSE:NIFTY50-INDEX",
+   "kind": "seed",
+   "status": "success",
+   "detail": {
+    "bars_ingested": 6120,
+    "by_resolution": {
+     "15": 5880,
+     "D": 240
+    },
+    "days": 180,
+    "sessions_scored": 118
+   },
+   "started_at": "2026-08-21T03:20:10Z",
+   "finished_at": "2026-08-21T03:22:41Z"
+  },
+  {
+   "id": 2,
+   "job_date": "2026-08-20",
+   "broker_id": 1,
+   "broker_name": "Main Fyers account",
+   "symbol": "NSE:NIFTY50-INDEX",
+   "kind": "market-close",
+   "status": "success",
+   "detail": {
+    "bars_ingested": 250,
+    "sessions_scored": 3
+   },
+   "started_at": "2026-08-20T11:30:02Z",
+   "finished_at": "2026-08-20T11:30:44Z"
+  },
+  {
+   "id": 1,
+   "job_date": "2026-08-19",
+   "broker_id": 2,
+   "broker_name": "Backup Fyers",
+   "symbol": "NSE:NIFTYBANK-INDEX",
+   "kind": "market-close",
+   "status": "failed",
+   "detail": {
+    "error": "Broker access token has expired; add today's token"
+   },
+   "started_at": "2026-08-19T11:30:02Z",
+   "finished_at": "2026-08-19T11:30:05Z"
+  }
+ ],
+ "symbols": [
+  {
+   "symbol": "NSE:NIFTY50-INDEX",
+   "label": "Nifty 50",
+   "resolutions": [
+    "15",
+    "D"
+   ],
+   "broker_id": 1,
+   "broker_name": "Main Fyers account",
+   "active": true,
+   "created_at": "2026-02-01T06:00:00Z",
+   "bars": 182450,
+   "sessions": 523,
+   "last_bar_date": "2026-08-20",
+   "clients": 1
+  },
+  {
+   "symbol": "NSE:NIFTYBANK-INDEX",
+   "label": "Nifty Bank",
+   "resolutions": [
+    "15",
+    "D"
+   ],
+   "broker_id": null,
+   "broker_name": null,
+   "active": true,
+   "created_at": "2026-03-14T06:00:00Z",
+   "bars": 164220,
+   "sessions": 511,
+   "last_bar_date": "2026-08-20",
+   "clients": 1
+  },
+  {
+   "symbol": "NSE:FINNIFTY-INDEX",
+   "label": "Fin Nifty",
+   "resolutions": [
+    "15",
+    "30",
+    "D"
+   ],
+   "broker_id": null,
+   "broker_name": null,
+   "active": true,
+   "created_at": "2026-06-02T06:00:00Z",
+   "bars": 42310,
+   "sessions": 128,
+   "last_bar_date": "2026-08-20",
+   "clients": 0
+  },
+  {
+   "symbol": "MCX:CRUDEOIL25AUGFUT",
+   "label": "Crude oil Aug futures",
+   "resolutions": [
+    "15",
+    "D"
+   ],
+   "broker_id": 2,
+   "broker_name": "Backup Fyers",
+   "active": false,
+   "created_at": "2026-07-19T06:00:00Z",
+   "bars": 0,
+   "sessions": 0,
+   "last_bar_date": null,
+   "clients": 1
+  }
+ ]
+}

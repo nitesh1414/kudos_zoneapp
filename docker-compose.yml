@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: zoneapp
       POSTGRES_USER: zoneapp
-      POSTGRES_PASSWORD: zoneapp-local-password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zoneapp-local-password}
     ports:
       - "5432:5432"
     volumes:
@@ -16,20 +16,20 @@ services:
       retries: 10
   app:
     build: .
+    # Values come from the repository-root .env (copy .env.example to .env).
+    # Defaults after ':-' are development-only conveniences.
     environment:
-      DATABASE_URL: postgresql://zoneapp:zoneapp-local-password@db:5432/zoneapp
-      ZONEAPP_ADMIN_USERNAME: admin
-      ZONEAPP_ADMIN_PASSWORD: local-admin-password
-      ZONEAPP_API_KEY: local-job-key
-      ZONEAPP_SECURE_COOKIES: "false"
-      ZONEAPP_SYMBOL: NSE:NIFTY50-INDEX
-      # Default Fyers broker credentials (pre-filled in admin UI)
-      FYERS_CLIENT_ID: 937RN4D2JZ-100
-      FYERS_SECRET_KEY: 5BZ4LOWW38
-      FYERS_USER_ID: FAH49247
-      FYERS_PIN: 1234
-      FYERS_TOTP_KEY: YDD7MARVVZENQ6N5XWVBRATDSJLH3WQV
-      FYERS_REDIRECT_URI: https://fyers.in/
+      DATABASE_URL: postgresql://zoneapp:${POSTGRES_PASSWORD:-zoneapp-local-password}@db:5432/zoneapp
+      ZONEAPP_ADMIN_USERNAME: ${ZONEAPP_ADMIN_USERNAME:-admin}
+      ZONEAPP_ADMIN_PASSWORD: ${ZONEAPP_ADMIN_PASSWORD:-local-admin-password}
+      ZONEAPP_API_KEY: ${ZONEAPP_API_KEY:-local-job-key}
+      ZONEAPP_ENCRYPTION_KEY: ${ZONEAPP_ENCRYPTION_KEY:-}
+      ZONEAPP_SECURE_COOKIES: "${ZONEAPP_SECURE_COOKIES:-false}"
+      ZONEAPP_SYMBOL: ${ZONEAPP_SYMBOL:-NSE:NIFTY50-INDEX}
+      # Broker defaults pre-filled in the admin UI; keep real values in .env.
+      FYERS_CLIENT_ID: ${FYERS_CLIENT_ID:-}
+      FYERS_SECRET_KEY: ${FYERS_SECRET_KEY:-}
+      FYERS_REDIRECT_URI: ${FYERS_REDIRECT_URI:-https://fyers.in/}
     ports:
       - "8000:8000"
     depends_on:
