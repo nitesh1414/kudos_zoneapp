@@ -76,4 +76,7 @@ def symbols_for(store, broker_id: int):
                       WHERE active = true AND (broker_id IS NULL OR broker_id = ?)
                       ORDER BY symbol""", [broker_id])
     symbols = [] if rows.empty else [r["symbol"] for r in rows.to_dict("records")]
-    return symbols or [os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX")]
+    if symbols:
+        return symbols
+    from .symbols import default_symbol
+    return [default_symbol(store)]

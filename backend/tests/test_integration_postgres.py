@@ -539,5 +539,89 @@ class TokenInputTests(unittest.TestCase):
         self.assertIn("redirect_uri", str(ctx.exception))
 
 
+
+
+
+@unittest.skipUnless(DSN, "DATABASE_URL is not set")
+class SymbolCatalogueTests(unittest.TestCase):
+    """Symbols, aliases and the landing symbol all live in the database, so a
+    brand-new symbol must flow through the whole app without code changes."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        import app.main as main
+
+        cls.main = main
+        cls.store = main.store
+        cls.admin = TestClient(main.app)
+        cls.admin.__enter__()
+        cls.admin.post("/api/auth/login", json={"username": "admin",
+                                                "password": os.environ["ZONEAPP_ADMIN_PASSWORD"]})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.admin.__exit__(None, None, None)
+
+    def test_catalog_is_served_from_the_database(self):
+        catalog = self.admin.get("/api/symbols/catalog").json()
+        self.assertTrue(catalog["symbols"])
+        self.assertIn("NIFTY", catalog["aliases"])
+        self.assertIn("15", catalog["resolutions"])
+        self.assertIn(catalog["default"], [s["symbol"] for s in catalog["symbols"]])
+
+    def test_a_new_symbol_flows_everywhere(self):
+        new = "NSE:TATAMOTORS-EQ"
+        created = self.admin.post("/api/admin/symbols",
+                                  json={"symbol": new, "label": "Tata Motors", "seed": False})
+        self.assertEqual(200, created.status_code, created.text)
+        try:
+            # visible in the catalogue every picker is built from
+            catalog = self.admin.get("/api/symbols/catalog").json()
+            self.assertIn(new, [s["symbol"] for s in catalog["symbols"]])
+            # the dashboard answers for it even with no candles yet
+            payload = self.admin.get(f"/api/dashboard?symbol={new}")
+            self.assertEqual(200, payload.status_code, payload.text)
+            self.assertEqual(new, payload.json()["symbol"])
+            self.assertEqual([], payload.json()["zones"]["rows"])
+            for path in (f"/api/health?symbol={new}", f"/api/stats/zones?symbol={new}",
+                         f"/api/stats/days?symbol={new}", f"/api/sessions?symbol={new}"):
+                self.assertEqual(200, self.admin.get(path).status_code, path)
+            # and the job/seeder pick it up
+            from app.jobs import targets
+            self.assertIn(new, {t["symbol"] for t in targets(self.store)})
+        finally:
+            self.admin.delete(f"/api/admin/symbols/{new}?purge=true")
+
+    def test_aliases_are_editable_and_used_when_adding(self):
+        self.admin.post("/api/admin/symbol-aliases", json={"alias": "tatamotors", "symbol": "NSE:TATAMOTORS-EQ"})
+        try:
+            self.assertEqual("NSE:TATAMOTORS-EQ", self.admin.get("/api/symbols/catalog").json()["aliases"]["TATAMOTORS"])
+            added = self.admin.post("/api/admin/symbols", json={"symbol": "TataMotors", "seed": False})
+            self.assertEqual("NSE:TATAMOTORS-EQ", added.json()["symbol"])
+            self.admin.delete("/api/admin/symbols/NSE:TATAMOTORS-EQ?purge=true")
+        finally:
+            self.admin.delete("/api/admin/symbol-aliases/TATAMOTORS")
+        self.assertNotIn("TATAMOTORS", self.admin.get("/api/symbols/catalog").json()["aliases"])
+
+    def test_landing_symbol_is_stored_and_switchable(self):
+        symbols = [s["symbol"] for s in self.admin.get("/api/symbols").json()]
+        target = symbols[-1]
+        self.admin.patch(f"/api/admin/symbols/{target}", json={"is_default": True})
+        self.assertEqual(target, self.admin.get("/api/symbols/catalog").json()["default"])
+        # a request without ?symbol= lands on it
+        self.assertEqual(target, self.admin.get("/api/dashboard").json()["symbol"])
+        rows = self.admin.get("/api/symbols").json()
+        self.assertEqual(1, sum(1 for r in rows if r["is_default"]))
+
+    def test_removing_the_default_promotes_another_symbol(self):
+        self.admin.post("/api/admin/symbols", json={"symbol": "NSE:INFY-EQ", "label": "Infosys", "seed": False})
+        self.admin.patch("/api/admin/symbols/NSE:INFY-EQ", json={"is_default": True})
+        self.admin.delete("/api/admin/symbols/NSE:INFY-EQ?purge=true")
+        catalog = self.admin.get("/api/symbols/catalog").json()
+        self.assertTrue(catalog["default"])
+        self.assertIn(catalog["default"], [s["symbol"] for s in catalog["symbols"]])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  CandlestickChart, CheckCircle2, DatabaseZap, Layers, PlayCircle, Plus, Power, Search, Trash2,
+  CandlestickChart, CheckCircle2, DatabaseZap, Layers, PlayCircle, Plus, Power, Search, Star, Tags, Trash2,
 } from 'lucide-react'
 import { api, endpoints } from '../../lib/api.js'
 import { useApi, fmtDate, fmtNum } from '../../lib/hooks.js'
@@ -10,16 +10,20 @@ import {
   TableWrap, Td, Th,
 } from '../../components/ui.jsx'
 
-const RESOLUTIONS = ['1', '5', '15', '30', '60', 'D']
-const QUICK_ADD = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX']
-
 export default function Symbols() {
   const symbols = useApi(endpoints.symbols)
   const brokers = useApi(endpoints.brokers)
-  const { refreshTracked } = useSymbol()
+  const { refreshTracked, aliases, resolutions: catalogResolutions, defaultSymbol } = useSymbol()
+  // Everything below is database-driven: aliases teach the shortcuts, the
+  // provider tells us which timeframes exist.
+  const RESOLUTIONS = catalogResolutions.length ? catalogResolutions : ['15', 'D']
+  const QUICK_ADD = [...new Set(Object.entries(aliases)
+    .filter(([alias]) => !alias.includes(' '))
+    .map(([alias]) => alias))].slice(0, 8)
   const [query, setQuery] = useState('')
   const [addOpen, setAddOpen] = useState(false)
   const [form, setForm] = useState({ symbol: '', label: '', broker_id: '', resolutions: ['15', 'D'], seed_days: 180 })
+  const [aliasForm, setAliasForm] = useState({ alias: '', symbol: '' })
   const [confirm, setConfirm] = useState(null)
   const [purge, setPurge] = useState(false)
   const [seedDays, setSeedDays] = useState(180)
@@ -67,6 +71,25 @@ export default function Symbols() {
     try {
       const res = await api.post(endpoints.adminSymbols, { symbol, seed: true, seed_days: seedDays })
       setMsg({ ok: true, text: res.seed_message })
+      reload()
+    } catch (err) {
+      setMsg({ ok: false, text: err.message })
+    }
+  }
+
+  const makeDefault = async (row) => {
+    await api.patch(endpoints.adminSymbol(row.symbol), { is_default: true })
+    setMsg({ ok: true, text: `${row.symbol} is now the symbol everyone lands on.` })
+    reload()
+  }
+
+  const addAlias = async (e) => {
+    e.preventDefault()
+    setMsg(null)
+    try {
+      await api.post(endpoints.symbolAliases, aliasForm)
+      setMsg({ ok: true, text: `Typing "${aliasForm.alias}" now means ${aliasForm.symbol}.` })
+      setAliasForm({ alias: '', symbol: '' })
       reload()
     } catch (err) {
       setMsg({ ok: false, text: err.message })
@@ -232,10 +255,15 @@ export default function Symbols() {
                   <Td className="num text-xs text-slate-400">{r.last_bar_date ? fmtDate(r.last_bar_date) : '—'}</Td>
                   <Td className="num text-xs text-slate-400">{fmtNum(r.clients)}</Td>
                   <Td>
-                    <Badge tone={r.active ? 'up' : 'neutral'}>{r.active ? 'Tracking' : 'Paused'}</Badge>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge tone={r.active ? 'up' : 'neutral'}>{r.active ? 'Tracking' : 'Paused'}</Badge>
+                      {r.is_default && <Badge tone="brand">Default</Badge>}
+                    </div>
                   </Td>
                   <Td>
                     <div className="flex justify-end gap-1.5">
+                      <IconButton icon={Star} label={r.is_default ? 'Landing symbol' : 'Make the landing symbol'}
+                                  onClick={() => makeDefault(r)} tone={r.is_default ? 'ghost' : 'ghost'} />
                       <IconButton icon={DatabaseZap} label="Fetch data now" onClick={() => seedOne(r)} />
                       <IconButton icon={Power} label={r.active ? 'Pause tracking' : 'Resume tracking'} onClick={() => toggle(r)} />
                       <IconButton icon={Trash2} tone="danger" label="Remove symbol" onClick={() => setConfirm(r)} />
@@ -246,6 +274,25 @@ export default function Symbols() {
             </tbody>
           </TableWrap>
         )}
+      </Card>
+
+      <Card title="Symbol shortcuts" icon={Tags}
+            subtitle="Aliases are stored in the database: type the shorthand anywhere and it expands to the provider symbol.">
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(aliases).map(([alias, target]) => (
+            <span key={alias} className="rounded-full bg-white/5 px-3 py-1.5 text-[11.5px] text-slate-300 ring-1 ring-white/10">
+              <b className="text-slate-100">{alias}</b> <span className="text-slate-500">→</span>{' '}
+              <span className="num">{target}</span>
+            </span>
+          ))}
+        </div>
+        <form onSubmit={addAlias} className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <Input value={aliasForm.alias} onChange={(e) => setAliasForm({ ...aliasForm, alias: e.target.value })}
+                 placeholder="Shortcut, e.g. SENSEX" className="sm:w-56" required />
+          <Input value={aliasForm.symbol} onChange={(e) => setAliasForm({ ...aliasForm, symbol: e.target.value })}
+                 placeholder="Provider symbol, e.g. BSE:SENSEX-INDEX" className="flex-1" required />
+          <Button type="submit" icon={Plus}>Add shortcut</Button>
+        </form>
       </Card>
 
       <Modal

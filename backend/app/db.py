@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS tracked_symbols (
     resolutions JSONB NOT NULL DEFAULT '["15","D"]'::jsonb,
     broker_id BIGINT REFERENCES broker_connections(id) ON DELETE SET NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS symbol_aliases (
+    alias TEXT PRIMARY KEY, symbol TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS market_holidays (
@@ -145,6 +150,7 @@ class Store:
             # job_runs gained a 'kind' so seeding and the market-close job can
             # both record a run for the same broker/symbol on the same day.
             con.execute("ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'market-close'")
+            con.execute("ALTER TABLE tracked_symbols ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE")
             job_key = con.execute("""SELECT conname, pg_get_constraintdef(oid) definition FROM pg_constraint
                 WHERE conrelid='job_runs'::regclass AND contype='u'""").fetchone()
             if job_key and "kind" not in job_key["definition"]:

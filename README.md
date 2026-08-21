@@ -169,12 +169,21 @@ entry is fetched and run through the zone engine on its own, whether or not a
 client is assigned to it, and each symbol keeps its own candles, zone sheets,
 outcomes and base rates.
 
+The catalogue lives in PostgreSQL — `tracked_symbols` and `symbol_aliases` —
+and `GET /api/symbols/catalog` serves it to the interface, so a symbol added in
+the admin panel appears in every picker, job and API without a code change.
+
 - A new installation starts tracking `NSE:NIFTY50-INDEX`, `NSE:NIFTYBANK-INDEX`
-  and `NSE:MIDCPNIFTY-INDEX` automatically, so the first broker token is enough
-  to start collecting data.
-- Aliases are expanded on entry (`NIFTY` → `NSE:NIFTY50-INDEX`, `BANKNIFTY`,
-  `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`); anything else is passed to the provider
-  unchanged, so `NSE:RELIANCE-EQ` or `MCX:CRUDEOIL25AUGFUT` work too.
+  and `NSE:MIDCPNIFTY-INDEX`, and seeds the alias table; both are editable
+  afterwards and are only used on an empty database.
+- Aliases are rows, not constants: `NIFTY` → `NSE:NIFTY50-INDEX` ships as seed
+  data and administrators add their own under **Symbol shortcuts**. Anything
+  unknown is passed to the provider unchanged, so `NSE:RELIANCE-EQ` or
+  `MCX:CRUDEOILM25SEPFUT` work immediately.
+- One symbol is flagged as the landing symbol (`is_default`); that is what a
+  visitor sees before choosing anything, and deleting it promotes another.
+- A symbol with no candles yet answers every endpoint with an empty result
+  instead of failing, so adding one never breaks a screen.
 - Per symbol you can choose timeframes (15-minute is always included) and pin a
   specific broker connection, or leave it on any enabled connection.
 - `POST /api/admin/symbols` adds and immediately backfills one symbol,

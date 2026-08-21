@@ -44,12 +44,15 @@ def bootstrap_admin():
 
 
 def bootstrap_watchlist():
-    """First start: track the standard indices so the app has something to
-    fetch as soon as a broker token exists."""
+    """First start: seed the alias table and track the standard indices, so the
+    app has something to fetch as soon as a broker token exists. Everything is
+    editable afterwards and read back from the database."""
+    watchlist.seed_aliases(store)
     if not watchlist.tracked(store, active_only=False):
         for symbol, label in watchlist.DEFAULT_WATCHLIST:
             watchlist.add(store, symbol, label)
         print(f"[zoneapp] watchlist seeded with {len(watchlist.DEFAULT_WATCHLIST)} symbols")
+    watchlist.ensure_a_default(store)   # also fixes databases upgraded from an older schema
 
 
 @app.on_event("startup")
@@ -87,12 +90,8 @@ def resolve_symbol(user=None, symbol: str | None = None):
     """Any signed-in account may look at any symbol the platform tracks; the
     picker in the header is the only thing that chooses one."""
     if symbol:
-        return watchlist.normalize(symbol)
-    tracked = watchlist.all_symbols(store)
-    preferred = (user or {}).get("symbol")
-    if preferred and preferred in tracked:
-        return preferred
-    return tracked[0]
+        return watchlist.normalize(symbol, store)
+    return watchlist.default_symbol(store)
 
 
 class LoginIn(BaseModel): username: str; password: str
@@ -137,6 +136,10 @@ class SymbolPatch(BaseModel):
     resolutions: list[str] | None = None
     broker_id: int | None = None
     active: bool | None = None
+    is_default: bool | None = None
+class AliasIn(BaseModel):
+    alias: str = Field(min_length=1, max_length=80)
+    symbol: str = Field(min_length=1, max_length=80)
 class TokenExchangeIn(BaseModel):
     auth_code: str = Field(min_length=1)
 class BackfillIn(BaseModel):
@@ -218,9 +221,15 @@ def delete_client(user_id:int,_=Depends(admin_user)):
 # ------------------------------ SYMBOL WATCHLIST ------------------------------
 @app.get("/api/symbols")
 def list_symbols(user=Depends(current_user)):
-    """Symbols the platform tracks. Clients see the list read-only so they know
-    what their administrator can assign them."""
+    """Symbols the platform tracks, straight from the database."""
     return watchlist.tracked(store, active_only=user["role"] != "admin")
+
+@app.get("/api/symbols/catalog")
+def symbol_catalog(_=Depends(current_user)):
+    """Everything the UI needs to build symbol and timeframe pickers: the
+    watchlist, the aliases, the supported resolutions and the landing symbol.
+    Adding a symbol in the admin panel changes this for every screen."""
+    return watchlist.catalog(store, INDIA_CANDLE_RESOLUTIONS)
 
 @app.post("/api/admin/symbols")
 def add_symbol(body:SymbolIn,background:BackgroundTasks,_=Depends(admin_user)):
@@ -241,9 +250,20 @@ def add_symbol(body:SymbolIn,background:BackgroundTasks,_=Depends(admin_user)):
 @app.patch("/api/admin/symbols/{symbol:path}")
 def update_symbol(symbol:str,body:SymbolPatch,_=Depends(admin_user)):
     watchlist.update(store,symbol,label=body.label,resolutions=body.resolutions,
-                     broker_id=body.broker_id,active=body.active,
+                     broker_id=body.broker_id,active=body.active,is_default=body.is_default,
                      broker_set="broker_id" in body.model_fields_set)
     return {"ok":True}
+
+@app.post("/api/admin/symbol-aliases")
+def add_symbol_alias(body:AliasIn,_=Depends(admin_user)):
+    """Teach the platform a shorthand, e.g. NIFTY -> NSE:NIFTY50-INDEX."""
+    try: watchlist.add_alias(store,body.alias,body.symbol)
+    except ValueError as exc: raise HTTPException(400,str(exc))
+    return {"ok":True,"aliases":watchlist.aliases(store)}
+
+@app.delete("/api/admin/symbol-aliases/{alias:path}")
+def delete_symbol_alias(alias:str,_=Depends(admin_user)):
+    watchlist.remove_alias(store,alias); return {"ok":True}
 
 @app.delete("/api/admin/symbols/{symbol:path}")
 def delete_symbol(symbol:str,purge:bool=False,_=Depends(admin_user)):
@@ -253,7 +273,7 @@ def delete_symbol(symbol:str,purge:bool=False,_=Depends(admin_user)):
 
 @app.post("/api/admin/symbols/{symbol:path}/seed")
 def seed_symbol_now(symbol:str,body:SeedRangeIn,background:BackgroundTasks,_=Depends(admin_user)):
-    clean=watchlist.normalize(symbol)
+    clean=watchlist.normalize(symbol,store)
     try: row,_adapter=load_adapter(store,symbol=clean)
     except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
     try: date_from,date_to=date_window(body.days,body.date_from,body.date_to)
@@ -276,7 +296,7 @@ def run_seed(body:SeedRangeIn,background:BackgroundTasks,_=Depends(admin_user)):
     except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
     try: date_from,date_to=date_window(body.days,body.date_from,body.date_to)
     except ValueError as exc: raise HTTPException(400,str(exc))
-    chosen=[watchlist.normalize(s) for s in body.symbols] if body.symbols else watchlist.all_symbols(store)
+    chosen=[watchlist.normalize(s,store) for s in body.symbols] if body.symbols else watchlist.all_symbols(store)
     if not chosen: raise HTTPException(400,"No symbols are being tracked yet")
     resolutions=[r for r in (body.resolutions or []) if r in INDIA_CANDLE_RESOLUTIONS] or None
     background.add_task(seed_all,store,None,params(),chosen,date_from,date_to,resolutions)
@@ -548,7 +568,7 @@ def put_gift_nifty(body: GiftNiftyIn, _=Depends(admin_user)):
     payload = dict(
         ltp=body.ltp, pdc=body.pdc,
         captured_at=body.captured_at or datetime.now(timezone.utc).isoformat(),
-        symbol=os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX"),
+        symbol=watchlist.default_symbol(store),
     )
     payload["gap_pts"] = round(body.ltp - body.pdc, 2)
     payload["gap_pct"] = round(100 * (body.ltp - body.pdc) / body.pdc, 2)

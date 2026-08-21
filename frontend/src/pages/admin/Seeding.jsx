@@ -3,9 +3,8 @@ import { CalendarRange, CandlestickChart, CheckCheck, DatabaseZap, PlayCircle, S
 import { api, endpoints } from '../../lib/api.js'
 import { useApi, fmtDate, fmtNum } from '../../lib/hooks.js'
 import SyncActivity from '../../components/SyncActivity.jsx'
+import { useSymbol } from '../../lib/symbol.jsx'
 import { Badge, Button, Card, Empty, Field, Input, Skeleton } from '../../components/ui.jsx'
-
-const TIMEFRAMES = ['1', '5', '15', '30', '60', 'D']
 
 // "Past day", "past month" … expressed as trailing day counts the API accepts.
 const PRESETS = [
@@ -27,6 +26,8 @@ const isoDaysAgo = (days) => {
 }
 
 export default function Seeding() {
+  const { resolutions } = useSymbol()
+  const TIMEFRAMES = resolutions.length ? resolutions : ['15', 'D']
   const symbols = useApi(endpoints.symbols)
   const runs = useApi(() => endpoints.jobRuns(20), [])
   const [preset, setPreset] = useState('month')

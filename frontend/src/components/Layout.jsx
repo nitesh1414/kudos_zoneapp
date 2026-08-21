@@ -113,7 +113,9 @@ function TabStrip({ isAdmin }) {
 function SymbolSwitcher({ className = '' }) {
   const { symbol, setSymbol, tracked, canSwitch } = useSymbol()
   if (!canSwitch) return null
-  const options = [...new Set([symbol, ...tracked.map((t) => t.symbol)].filter(Boolean))]
+  // Options come from the database watchlist, so a newly added symbol shows up
+  // here without any code change.
+  const options = tracked.length ? tracked : [{ symbol, label: '' }]
   return (
     <label className={`items-center gap-2 rounded-xl bg-white/5 py-1.5 pr-2 pl-3 ring-1 ring-white/10 ${className}`}>
       <CandlestickChart size={14} className="text-brand-400" />
@@ -122,9 +124,9 @@ function SymbolSwitcher({ className = '' }) {
         onChange={(e) => setSymbol(e.target.value)}
         className="num max-w-[13rem] cursor-pointer border-0 bg-transparent text-[12.5px] font-semibold text-slate-200 focus:outline-none"
       >
-        {options.map((s) => (
-          <option key={s} value={s} className="bg-ink-850">
-            {s}
+        {options.map((o) => (
+          <option key={o.symbol} value={o.symbol} className="bg-ink-850">
+            {o.label ? `${o.label} · ${o.symbol}` : o.symbol}
           </option>
         ))}
       </select>
@@ -183,7 +185,7 @@ function UserMenu() {
 
 export default function Layout() {
   const { user, isAdmin } = useAuth()
-  const { symbol } = useSymbol()
+  const { symbol, label } = useSymbol()
   const [drawer, setDrawer] = useState(false)
   const location = useLocation()
   useEffect(() => setDrawer(false), [location.pathname])
@@ -236,7 +238,10 @@ export default function Layout() {
                 <h1 className="truncate text-[17px] font-bold tracking-tight text-white sm:text-xl">
                   {current?.label || 'Dashboard'}
                 </h1>
-                <p className="num truncate text-[11px] text-slate-500">{symbol || user?.symbol}</p>
+                <p className="truncate text-[11px] text-slate-500">
+                  {label && <span className="text-slate-400">{label} · </span>}
+                  <span className="num">{symbol}</span>
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-2.5">

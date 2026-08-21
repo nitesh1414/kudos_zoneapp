@@ -5,20 +5,28 @@ import { useAuth } from './auth.jsx'
 const SymbolContext = createContext(null)
 const STORAGE_KEY = 'zoneapp.symbol'
 
-/** Which symbol the market tabs are showing. Clients are pinned to their own
- * assigned symbol; administrators can switch between every tracked symbol. */
+/** Which symbol the market tabs are showing, plus the database-backed catalogue
+ * (watchlist, aliases, timeframes) every picker in the app is built from. */
+const EMPTY_CATALOG = { symbols: [], aliases: {}, resolutions: [], default: '' }
+
 export function SymbolProvider({ children }) {
   const { user } = useAuth()
   const [symbol, setSymbolState] = useState(() => localStorage.getItem(STORAGE_KEY) || '')
-  const [tracked, setTracked] = useState([])
+  const [catalog, setCatalog] = useState(EMPTY_CATALOG)
+
+  // One database-backed catalogue drives every symbol and timeframe picker,
+  // so a symbol added in the admin panel appears everywhere without a reload.
+  const loadCatalog = useCallback(() => {
+    if (!user) return Promise.resolve()
+    return api
+      .get('/api/symbols/catalog')
+      .then((data) => setCatalog({ ...EMPTY_CATALOG, ...(data || {}) }))
+      .catch(() => setCatalog(EMPTY_CATALOG))
+  }, [user])
 
   useEffect(() => {
-    if (!user) return
-    api
-      .get('/api/symbols')
-      .then((rows) => setTracked(rows || []))
-      .catch(() => setTracked([]))
-  }, [user])
+    loadCatalog()
+  }, [loadCatalog])
 
   const setSymbol = useCallback((next) => {
     setSymbolState(next || '')
@@ -27,20 +35,31 @@ export function SymbolProvider({ children }) {
   }, [])
 
   // Accounts are not tied to a symbol: anyone signed in can view any tracked
-  // symbol. Fall back to the first tracked one until a choice is made.
+  // one. The database decides which symbol a fresh visitor lands on.
+  const tracked = catalog.symbols || []
   const known = tracked.map((t) => t.symbol)
-  const active = (symbol && known.includes(symbol) && symbol) || known[0] || symbol || ''
+  const active = (symbol && known.includes(symbol) && symbol) || catalog.default || known[0] || ''
 
   const value = useMemo(
-    () => ({ symbol: active, setSymbol, tracked, canSwitch: known.length > 0, refreshTracked: () =>
-      api.get('/api/symbols').then((rows) => setTracked(rows || [])).catch(() => {}) }),
+    () => ({
+      symbol: active,
+      setSymbol,
+      tracked,
+      aliases: catalog.aliases || {},
+      resolutions: catalog.resolutions || [],
+      defaultSymbol: catalog.default || '',
+      label: tracked.find((t) => t.symbol === active)?.label || '',
+      canSwitch: known.length > 0,
+      refreshTracked: loadCatalog,
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [active, setSymbol, tracked, known.length],
+    [active, setSymbol, catalog, known.length, loadCatalog],
   )
   return <SymbolContext.Provider value={value}>{children}</SymbolContext.Provider>
 }
 
-export const useSymbol = () => useContext(SymbolContext) || { symbol: '', tracked: [], canSwitch: false }
+export const useSymbol = () =>
+  useContext(SymbolContext) || { symbol: '', tracked: [], aliases: {}, resolutions: [], canSwitch: false }
 
 /** Append the active symbol to an API path. */
 export function withSymbol(path, symbol) {
