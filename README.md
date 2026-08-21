@@ -12,8 +12,10 @@ rates. It does **not** place orders or produce trading advice.
   hypertable when the extension is available
 - `backend/app/brokers/` — provider-independent `BrokerAdapter`, registry, CSV
   adapter and Fyers implementation
-- `backend/app/main.py` — authentication plus admin/client APIs
-- `backend/app/templates/` — separate login, admin and client interfaces
+- `backend/app/main.py` — authentication, admin/client APIs and single-page-app hosting
+- `frontend/` — React + Vite interface (login screen, tabbed client dashboard,
+  tabbed admin panel). `npm run build` compiles it into `backend/app/static/`,
+  which FastAPI serves
 - `backend/app/jobs.py` — idempotent trading-day market-close worker
 - `deploy/` — systemd, nginx and 17:00 Asia/Kolkata cron examples
 
@@ -26,7 +28,9 @@ and base-rate tables are derived and can be rebuilt.
 docker compose up --build
 ```
 
-Open <http://localhost:8000>. The local compose credentials are:
+Open <http://localhost:8000>. There is no public landing page — the first
+screen is always the login form, and everything else lives behind it as tabs.
+The local compose credentials are:
 
 - username: `admin`
 - password: `local-admin-password`
@@ -49,14 +53,31 @@ uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 The application reads `backend/.env` itself; it does not require Docker or
 machine-level environment configuration.
 
+## Frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev        # Vite dev server on :5173, proxies /api to :8000
+npm run dev:mock   # same UI against built-in demo data, no database needed
+npm run build      # writes backend/app/static/ (committed, so plain uvicorn works)
+```
+
+Market data is ingested through broker connections and the market-close job;
+there is no CSV upload in the interface.
+
 ## Administrator workflow
 
 1. Sign in at `/login` and open **Broker connections**.
 2. Add credentials for a registered provider and use **Test**.
 3. Open **Client management**, create a login, select its broker, and assign a
    symbol in that provider's symbol format.
-4. The client signs in through the same login page and is redirected to the
-   separate `/app` result view. A client can only query their assigned symbol.
+4. The client signs in through the same login page and lands on the same
+   dashboard; the Administration tabs are only rendered for administrators.
+   A client can only query their assigned symbol.
+
+Client management supports create, edit (name, symbol, password reset, broker),
+enable/disable and delete, in either a card or a table view.
 
 The symbol picker searches Fyers' complete Indian symbol masters for NSE cash
 and indices, NSE derivatives/currency, BSE cash/derivatives, and MCX

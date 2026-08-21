@@ -11,3 +11,5 @@ nohup.out
 *.png
 backend/.fyers_token
 backups/
+node_modules/
+frontend/.vite/
