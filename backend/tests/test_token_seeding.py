@@ -54,6 +54,11 @@ class FakeStore:
         self.bars, self.job_runs = [], []
 
     def one(self, sql, params=None):
+        if "job_runs" in sql and "RETURNING id" in sql:
+            self.job_runs.append(params)          # the seed slot is free
+            return {"id": 1}
+        if "SELECT detail FROM job_runs" in sql:
+            return {"detail": {}}                 # nothing queued behind us
         return dict(self.connection_row) if "broker_connections" in sql else None
 
     def q(self, sql, params=None):
@@ -119,7 +124,10 @@ class SeedingTests(unittest.TestCase):
         self.assertEqual(8, run["bars_ingested"])  # 4 bars x 2 resolutions
         self.assertEqual(3, run["sessions_scored"])
         self.assertEqual({"15", "D"}, set(run["by_resolution"]))
-        self.assertTrue(any("running" in (p or []) for p in store.job_runs))
+        recorded = [json.dumps(p, default=str) for p in store.job_runs]
+        # the run claims its slot with the window, then records the outcome
+        self.assertTrue(any("date_from" in r for r in recorded), recorded)
+        self.assertTrue(any("success" in r for r in recorded), recorded)
 
     def test_seed_without_token_fails_loudly(self):
         store = FakeStore(access_token="")
@@ -157,7 +165,7 @@ class TokenEndpointTests(unittest.TestCase):
 
         with TestClient(self.main.app) as client:
             response = client.post("/api/brokers/1/token",
-                                   json={"access_token": "fresh-token-123", "seed_days": 30})
+                                   json={"access_token": "fresh-token-123", "seed": True, "seed_days": 30})
         body = response.json()
         self.assertEqual(200, response.status_code)
         self.assertTrue(body["seeding"])

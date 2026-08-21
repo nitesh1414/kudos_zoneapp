@@ -110,10 +110,10 @@ class BrokerIn(BaseModel):
 class BrokerTokenIn(BaseModel):
     access_token: str = ""      # the token itself…
     auth_code: str = ""         # …or the auth code / redirect URL to exchange
-    # Saving a token immediately backfills history for the symbols that
-    # depend on this connection, so other services never see empty tables.
-    seed: bool = True
-    seed_days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
+    # Saving a token just saves the token. History is fetched only when asked
+    # for, here or from the Data seeding tab.
+    seed: bool = False
+    seed_days: int = Field(default=DEFAULT_DAYS, ge=1, le=3650)
 class SeedIn(BaseModel):
     days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
     symbols: list[str] | None = None
@@ -332,11 +332,7 @@ def add_broker(body:BrokerIn,background:BackgroundTasks,_=Depends(admin_user)):
     row=store.one("""INSERT INTO broker_connections(name,broker_type,credentials,resolutions,token_updated_at,token_expires_at,enabled)
         VALUES (?,?,?::jsonb,?::jsonb,?,?,?) RETURNING id""",
         [body.name,body.broker_type,json.dumps(encrypt_credentials(body.credentials)),json.dumps(selected),now if expiry else None,expiry,body.enabled])
-    seeded=[]
-    if body.credentials.get("access_token"):
-        seeded=symbols_for(store,row["id"])
-        background.add_task(seed_broker,store,row["id"],DEFAULT_DAYS,params(),seeded)
-    return {"ok":True,"id":row["id"],"seeding":bool(seeded),"seed_symbols":seeded}
+    return {"ok":True,"id":row["id"],"seeding":False,"seed_symbols":[]}
 @app.get("/api/admin/brokers/{broker_id}/login-url")
 def broker_login_url(broker_id:int,_=Depends(admin_user)):
     """Provider sign-in URL built from THIS connection's credentials, so the
@@ -417,8 +413,8 @@ def update_broker_token(broker_id:int,body:BrokerTokenIn,background:BackgroundTa
         background.add_task(seed_broker,store,broker_id,body.seed_days,params(),seeded)
     return {"ok":True,"connected":True,"message":status.message,"expires_at":expires,"exchanged":exchanged,
             "seeding":bool(seeded),"seed_symbols":seeded,
-            "seed_message":(f"Backfilling {body.seed_days} days for {len(seeded)} symbol(s) in the background."
-                            if seeded else "Token saved.")}
+            "seed_message":(f"Fetching the last {body.seed_days} days for {len(seeded)} symbol(s) in the background."
+                            if seeded else "Token saved. Use Data seeding when you want to fetch history.")}
 
 
 @app.post("/api/admin/brokers/{broker_id}/seed")

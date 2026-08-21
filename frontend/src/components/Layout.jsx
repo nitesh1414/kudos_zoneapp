@@ -200,9 +200,6 @@ export default function Layout() {
         <div className="scrollbar-thin mt-8 flex-1 overflow-y-auto pr-1">
           <NavItems isAdmin={isAdmin} />
         </div>
-        <div className="rounded-xl bg-white/5 p-3 text-[11px] leading-relaxed text-slate-500 ring-1 ring-white/10">
-          Reference map generator. Base rates describe the stored sample — not forecasts.
-        </div>
       </aside>
 
       {/* Mobile drawer */}

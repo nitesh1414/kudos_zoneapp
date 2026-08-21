@@ -20,6 +20,7 @@ export default function SyncActivity({ runs }) {
     const d = r.detail || {}
     if (d.error) return d.error
     const parts = []
+    if (d.skipped) return d.reason || 'skipped — already running'
     if (d.bars_ingested !== undefined) parts.push(`${fmtNum(d.bars_ingested)} bars`)
     if (d.sessions_scored !== undefined) parts.push(`${fmtNum(d.sessions_scored)} sessions scored`)
     if (d.date_from) parts.push(`${d.date_from} → ${d.date_to}`)

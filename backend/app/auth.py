@@ -57,13 +57,19 @@ def delete_session(store, token: str | None):
 #   1. ZONEAPP_ENCRYPTION_KEY  — what production should set
 #   2. a random key persisted in the database, created on first use
 #   3. legacy key derived from ZONEAPP_API_KEY (read-only, for old installations)
-_KEY_PROVIDER = None
+_KEY_PROVIDERS = []
 
 
 def use_key_provider(provider):
-    """Install a callable returning the installation's stored Fernet key."""
-    global _KEY_PROVIDER
-    _KEY_PROVIDER = provider
+    """Register a callable returning a stored Fernet key.
+
+    Providers accumulate rather than replace each other: a process that talks
+    to more than one database (the migration tooling, tests) must still be able
+    to read rows written by the first one. Encryption always uses the first key
+    in the list, so nothing is re-encrypted behind the operator's back.
+    """
+    if provider not in _KEY_PROVIDERS:
+        _KEY_PROVIDERS.append(provider)
 
 
 def new_encryption_key() -> str:
@@ -80,9 +86,9 @@ def _keys() -> list:
     env_key = os.getenv("ZONEAPP_ENCRYPTION_KEY")
     if env_key:
         keys.append(env_key.strip())
-    if _KEY_PROVIDER:
+    for provider in _KEY_PROVIDERS:
         try:
-            stored = _KEY_PROVIDER()
+            stored = provider()
         except Exception:
             stored = None
         if stored:

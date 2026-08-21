@@ -100,7 +100,7 @@ export default function Brokers() {
   const [backfill, setBackfill] = useState({ symbol: 'NSE:NIFTY50-INDEX', date_from: '2015-01-01', date_to: '' })
   const [confirm, setConfirm] = useState(null)
   const [result, setResult] = useState(null)
-  const [seedDays, setSeedDays] = useState(180)
+  const [seedDays, setSeedDays] = useState(0)   // 0 = save the token only
   const [tokenError, setTokenError] = useState('')
 
   const spec = useMemo(() => (types.data || []).find((t) => t.key === typeKey), [types.data, typeKey])
@@ -135,8 +135,8 @@ export default function Brokers() {
     try {
       const res = await api.post(endpoints.brokerToken(tokenFor.id), {
         access_token: tokenValue.trim(),
-        seed: true,
-        seed_days: seedDays,
+        seed: seedDays > 0,
+        ...(seedDays > 0 ? { seed_days: seedDays } : {}),
       })
       setResult({ ok: true, text: `${res.message || 'Token saved.'} ${res.seed_message || ''}`.trim() })
       setTokenError('')
@@ -168,9 +168,10 @@ export default function Brokers() {
   }
 
   const seed = async (b) => {
-    setResult({ ok: true, text: `Starting a ${seedDays}-day seed for ${b.name}…` })
+    const days = seedDays > 0 ? seedDays : 30
+    setResult({ ok: true, text: `Fetching the last ${days} days for ${b.name}…` })
     try {
-      const res = await api.post(endpoints.brokerSeed(b.id), { days: seedDays })
+      const res = await api.post(endpoints.brokerSeed(b.id), { days })
       setResult({ ok: true, text: res.seed_message })
       setTimeout(runs.reload, 800)
     } catch (err) {
@@ -378,15 +379,17 @@ export default function Brokers() {
               {tokenError}
             </p>
           )}
-          <Field label="Seed history after saving" hint="Candles are backfilled and zones rebuilt in the background so dependent services have data straight away.">
+          <Field label="Fetch history after saving"
+                 hint="Optional. The Data seeding tab can fetch any period later, and re-fetching an overlapping range is safe.">
             <select
               className="w-full rounded-xl border border-white/10 bg-ink-900/80 px-3 py-2.5 text-sm text-slate-100"
               value={seedDays}
               onChange={(e) => setSeedDays(Number(e.target.value))}
             >
-              {[30, 90, 180, 365, 730].map((d) => (
+              <option value={0}>Don't fetch anything — just save the token</option>
+              {[1, 7, 30, 90, 180, 365].map((d) => (
                 <option key={d} value={d}>
-                  Last {d} days
+                  Last {d} day{d === 1 ? '' : 's'}
                 </option>
               ))}
             </select>

@@ -147,11 +147,11 @@ class EndToEndTests(unittest.TestCase):
             load_adapter(self.store, broker_id=self.broker_id)
         self.assertIn("Daily token", str(ctx.exception))
 
-    def test_04_saving_a_token_syncs_everywhere_and_seeds(self):
+    def test_04_saving_a_token_syncs_everywhere_and_can_seed(self):
         from app.broker_store import load_adapter
 
         saved = self.admin.post(f"/api/brokers/{self.broker_id}/token",
-                                json={"access_token": "mock-token-1234567890", "seed_days": 120})
+                                json={"access_token": "mock-token-1234567890", "seed": True, "seed_days": 120})
         self.assertEqual(200, saved.status_code, saved.text)
         body = saved.json()
         self.assertTrue(body["connected"])
@@ -621,6 +621,100 @@ class SymbolCatalogueTests(unittest.TestCase):
         catalog = self.admin.get("/api/symbols/catalog").json()
         self.assertTrue(catalog["default"])
         self.assertIn(catalog["default"], [s["symbol"] for s in catalog["symbols"]])
+
+
+
+
+
+@unittest.skipUnless(DSN, "DATABASE_URL is not set")
+class ReseedAndOverlapTests(unittest.TestCase):
+    """Saving a token must not force a backfill, and repeated or overlapping
+    seeds must converge on the same data instead of duplicating or racing."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        import app.main as main
+
+        cls.main = main
+        cls.store = main.store
+        cls.client = TestClient(main.app)
+        cls.client.__enter__()
+        cls.client.post("/api/auth/login", json={"username": "admin",
+                                                 "password": os.environ["ZONEAPP_ADMIN_PASSWORD"]})
+        cls.symbol = "NSE:RESEED-TEST"
+        cls.client.post("/api/admin/symbols", json={"symbol": cls.symbol, "label": "Reseed test", "seed": False})
+        row = cls.client.get("/api/admin/brokers").json()
+        cls.broker_id = row[0]["id"] if row else None
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.delete(f"/api/admin/symbols/{cls.symbol}?purge=true")
+        cls.client.__exit__(None, None, None)
+
+    def _bars(self):
+        return int(self.store.counts(self.symbol)["bars"])
+
+    def test_saving_a_token_does_not_backfill_by_default(self):
+        response = self.client.post(f"/api/brokers/{self.broker_id}/token",
+                                    json={"access_token": "mock-token-1234567890"})
+        self.assertEqual(200, response.status_code, response.text)
+        self.assertFalse(response.json()["seeding"])
+        self.assertIn("Data seeding", response.json()["seed_message"])
+
+    def test_reseeding_the_same_range_is_idempotent(self):
+        from app.seeding import seed_symbol
+
+        first = seed_symbol(self.store, self.broker_id, self.symbol,
+                            None, None, ("15", "D"), "2026-05-01", "2026-05-31")
+        after_first = self._bars()
+        second = seed_symbol(self.store, self.broker_id, self.symbol,
+                             None, None, ("15", "D"), "2026-05-01", "2026-05-31")
+        self.assertEqual(first["bars_ingested"], second["bars_ingested"])
+        self.assertEqual(after_first, self._bars(), "re-running the same range duplicated rows")
+
+    def test_overlapping_range_only_adds_the_new_days(self):
+        from app.seeding import seed_symbol
+
+        before = self._bars()
+        seed_symbol(self.store, self.broker_id, self.symbol,
+                    None, None, ("15", "D"), "2026-05-15", "2026-06-15")
+        after = self._bars()
+        self.assertGreater(after, before, "the extra fortnight was not ingested")
+        again = self._bars()
+        seed_symbol(self.store, self.broker_id, self.symbol,
+                    None, None, ("15", "D"), "2026-05-20", "2026-06-10")   # fully inside
+        self.assertEqual(again, self._bars(), "an already covered range changed the row count")
+
+    def test_a_second_seed_while_one_runs_is_merged(self):
+        """The claim is atomic: the second caller does not run in parallel, and
+        its window is handed to the run that owns the slot."""
+        from datetime import datetime
+        from app import seeding
+
+        day = datetime.now(seeding.IST).date()
+        seeding._record(self.store, day, self.broker_id, self.symbol, "running",
+                        {"date_from": "2026-04-01", "date_to": "2026-04-30"})
+        skipped = seeding.seed_symbol(self.store, self.broker_id, self.symbol,
+                                      None, None, ("15",), "2026-03-01", "2026-03-31")
+        self.assertTrue(skipped["skipped"])
+        self.assertIn("already running", skipped["reason"])
+
+        pending = seeding._take_pending(self.store, day, self.broker_id, self.symbol, "2026-04-01", "2026-04-30")
+        self.assertEqual({"date_from": "2026-03-01", "date_to": "2026-04-30"}, pending)
+        seeding._record(self.store, day, self.broker_id, self.symbol, "success", {})
+
+    def test_covered_pending_window_needs_no_follow_up(self):
+        from datetime import datetime
+        from app import seeding
+
+        day = datetime.now(seeding.IST).date()
+        seeding._record(self.store, day, self.broker_id, self.symbol, "running",
+                        {"date_from": "2026-01-01", "date_to": "2026-12-31"})
+        seeding.seed_symbol(self.store, self.broker_id, self.symbol, None, None, ("15",), "2026-06-01", "2026-06-30")
+        self.assertIsNone(seeding._take_pending(self.store, day, self.broker_id, self.symbol,
+                                                "2026-01-01", "2026-12-31"))
+        seeding._record(self.store, day, self.broker_id, self.symbol, "success", {})
 
 
 if __name__ == "__main__":

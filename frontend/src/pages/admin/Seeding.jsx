@@ -216,8 +216,9 @@ export default function Seeding() {
           )}
 
           <p className="text-[11.5px] leading-relaxed text-slate-500 italic">
-            Seeding is idempotent: candles are upserted, so re-running a period repairs gaps instead of duplicating
-            data. Long ranges take a few minutes per symbol — progress appears below.
+            Seeding is idempotent: candles are upserted, so re-running a period — or overlapping one you already
+            fetched — repairs gaps instead of duplicating data. If a fetch for the same symbol is already running,
+            this range is merged into it rather than run twice. Long ranges take a few minutes per symbol.
             <Badge tone="neutral" className="ml-2">
               Runs in the background
             </Badge>

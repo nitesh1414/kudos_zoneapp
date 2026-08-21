@@ -1,5 +1,5 @@
 import {
-  Activity, ArrowDownRight, ArrowUpRight, CalendarCheck, Database, Gauge, Info, Layers, Plug, Radar, Server, Timer,
+  Activity, ArrowDownRight, ArrowUpRight, CalendarCheck, Database, Gauge, Info, Layers, Plug, Radar, Server,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useApi, fmtDate, fmtDateTime, fmtNum, fmtPct, fmtSigned } from '../lib/hooks.js'
@@ -10,30 +10,29 @@ import { Badge, Button, Card, Empty, ErrorState, Skeleton, Stars, Stat, TableWra
 import { ZoneRow, resultTone } from './Zones.jsx'
 
 function StatsRow() {
+  const { isAdmin } = useAuth()
   const { symbol } = useSymbol()
   const { data, loading } = useApi(() => withSymbol(endpoints.health, symbol), [symbol])
+  const columns = isAdmin ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'
   if (loading)
     return (
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+      <div className={`grid gap-3 ${columns}`}>
+        {(isAdmin ? [0, 1, 2, 3] : [0, 1, 2]).map((i) => (
           <Skeleton key={i} className="h-[74px] rounded-2xl" />
         ))}
       </div>
     )
   const connected = data?.broker && data.broker !== 'Not connected'
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className={`grid gap-3 ${columns}`}>
       <Stat icon={Database} tone="brand" label="Data in database" value={fmtNum(data?.bars)} hint="Raw intraday candles" />
       <Stat icon={CalendarCheck} tone="up" label="Sessions scored" value={fmtNum(data?.sessions)} hint="Completed & evaluated" />
       <Stat icon={Radar} label="Zone observations" value={fmtNum(data?.zone_observations)} hint="Outcome records" />
-      <Stat icon={Plug} tone={connected ? 'up' : 'down'} label="Broker" value={data?.broker || '—'} hint={connected ? 'Connected' : 'No broker assigned'} />
-      <Stat icon={Server} label="Symbol" value={data?.symbol || '—'} hint="Assigned to your account" />
-      <Stat
-        icon={Timer}
-        label="Server time"
-        value={data?.server_time ? new Date(data.server_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—'}
-        hint={data?.server_time ? `${fmtDate(data.server_time)} · Asia/Kolkata` : 'Asia/Kolkata'}
-      />
+      {/* the data source is an administrator concern, not a client one */}
+      {isAdmin && (
+        <Stat icon={Plug} tone={connected ? 'up' : 'down'} label="Broker" value={data?.broker || '—'}
+              hint={connected ? 'Connected' : 'Not connected'} />
+      )}
     </div>
   )
 }

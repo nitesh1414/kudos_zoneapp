@@ -17,6 +17,57 @@ DEFAULT_DAYS = 180
 SEED_RESOLUTIONS = ("15", "D")  # 15 is the zone engine's canonical timeframe
 
 
+def _claim(store, day, broker_id, symbol, window):
+    """Atomically take the seed slot for this (broker, symbol, day).
+
+    Returns True when this call owns the run. When another seed is already in
+    flight — the administrator saved a token and pressed Seed, or two ranges
+    overlap — the requested window is merged into the running row instead, and
+    the owner picks it up when it finishes. Uses the unique constraint, so it
+    holds across processes too.
+    """
+    claimed = store.one("""INSERT INTO job_runs(job_date,broker_id,symbol,kind,status,detail,finished_at)
+        VALUES (?,?,?,'seed','running',?::jsonb,NULL)
+        ON CONFLICT(job_date,broker_id,symbol,kind) DO UPDATE
+            SET status='running', detail=excluded.detail, started_at=now(), finished_at=NULL
+            WHERE job_runs.status <> 'running'
+        RETURNING id""", [day, broker_id, symbol, json.dumps(window)])
+    if claimed:
+        return True
+    _merge_pending(store, day, broker_id, symbol, window)
+    return False
+
+
+def _merge_pending(store, day, broker_id, symbol, window):
+    """Widen the window the in-flight run must still cover."""
+    row = store.one("SELECT detail FROM job_runs WHERE job_date=? AND broker_id=? AND symbol=? AND kind='seed'",
+                    [day, broker_id, symbol])
+    detail = dict(row["detail"] or {}) if row else {}
+    pending = dict(detail.get("pending") or {})
+    detail["pending"] = {
+        "date_from": min(x for x in (pending.get("date_from"), window["date_from"]) if x),
+        "date_to": max(x for x in (pending.get("date_to"), window["date_to"]) if x),
+    }
+    store.exec("UPDATE job_runs SET detail=?::jsonb WHERE job_date=? AND broker_id=? AND symbol=? AND kind='seed'",
+               [json.dumps(detail), day, broker_id, symbol])
+
+
+def _take_pending(store, day, broker_id, symbol, done_from, done_to):
+    """Any window requested while we were busy that we have not covered yet."""
+    row = store.one("SELECT detail FROM job_runs WHERE job_date=? AND broker_id=? AND symbol=? AND kind='seed'",
+                    [day, broker_id, symbol])
+    detail = dict((row or {}).get("detail") or {})
+    pending = detail.pop("pending", None)
+    if not pending:
+        return None
+    store.exec("UPDATE job_runs SET detail=?::jsonb WHERE job_date=? AND broker_id=? AND symbol=? AND kind='seed'",
+               [json.dumps(detail), day, broker_id, symbol])
+    # Overlapping ranges need no extra work; only the uncovered edges do.
+    if pending["date_from"] >= done_from and pending["date_to"] <= done_to:
+        return None
+    return {"date_from": min(pending["date_from"], done_from), "date_to": max(pending["date_to"], done_to)}
+
+
 def _record(store, day, broker_id, symbol, status, detail):
     store.exec("""INSERT INTO job_runs(job_date,broker_id,symbol,kind,status,detail,finished_at)
         VALUES (?,?,?,'seed',?,?::jsonb, CASE WHEN ?='running' THEN NULL ELSE now() END)
@@ -54,7 +105,10 @@ def seed_symbol(store, broker_id: int, symbol: str, days: int | None = DEFAULT_D
         _record(store, day, broker_id, symbol, "failed", detail)
         return detail
     window = {"date_from": date_from, "date_to": date_to}
-    _record(store, day, broker_id, symbol, "running", window)
+    if not _claim(store, day, broker_id, symbol, window):
+        # Another seed for this symbol is running; it will cover this window.
+        return {"skipped": True, "reason": "a seed for this symbol is already running; "
+                                           "the requested dates were merged into it", **window}
     try:
         row, adapter = load_adapter(store, broker_id=broker_id)
         resolutions = [str(r) for r in (resolutions or SEED_RESOLUTIONS)]
@@ -73,10 +127,17 @@ def seed_symbol(store, broker_id: int, symbol: str, days: int | None = DEFAULT_D
         detail = {"bars_ingested": sum(ingested.values()), "by_resolution": ingested,
                   "timeframe_warnings": warnings, **window, **result}
         _record(store, day, broker_id, symbol, "success" if result.get("ok") else "failed", detail)
+        pending = _take_pending(store, day, broker_id, symbol, date_from, date_to)
+        if pending:
+            # A wider range was requested while this run was in flight.
+            follow_up = seed_symbol(store, broker_id, symbol, None, params, resolutions,
+                                    pending["date_from"], pending["date_to"])
+            detail = {**detail, "extended_to": pending, "follow_up": follow_up}
         return detail
     except (BrokerUnavailable, Exception) as exc:
         detail = {"error": str(exc), **window}
         _record(store, day, broker_id, symbol, "failed", detail)
+        _take_pending(store, day, broker_id, symbol, date_from, date_to)
         return detail
 
 

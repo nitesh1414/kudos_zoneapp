@@ -219,11 +219,18 @@ back to "token not found" after an administrator adds one. Environment
 variables (`FYERS_ACCESS_TOKEN`) are only used when no stored connection has a
 token, which keeps standalone CLI runs working.
 
-Saving a token immediately starts a background seed: candles are fetched for
-every symbol that depends on the connection and zones plus base rates are
-rebuilt. Progress is visible under **Broker connections → Data sync activity**
-and can be re-triggered from the same page (`POST /api/admin/brokers/{id}/seed`,
-default 180 days).
+Saving a token only saves the token. History is fetched when you ask for it —
+optionally right there in the token dialog (default: don't fetch anything), or
+any time from the **Data seeding** tab. Progress is visible under **Broker
+connections → Data sync activity**.
+
+Seeding the same period twice, or a period that overlaps one already stored, is
+safe: candles are upserted on `(symbol, resolution, timestamp)`, so a re-run
+repairs gaps instead of duplicating rows. Two seeds for the same symbol never
+run at once either — the second caller's window is merged into the run that
+owns the slot (an atomic claim on `job_runs`, so it holds across processes),
+and any dates it still needs are fetched as a follow-up when that run
+finishes.
 
 ### Adding another broker provider
 
