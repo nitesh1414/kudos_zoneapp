@@ -110,11 +110,26 @@ outcomes and base rates.
   specific broker connection, or leave it on any enabled connection.
 - `POST /api/admin/symbols` adds and immediately backfills one symbol,
   `POST /api/admin/symbols/{symbol}/seed` refetches it, and
-  `POST /api/admin/seed-all` refetches everything.
+  `POST /api/admin/seed` runs an on-demand fetch for a chosen period.
 - The market-close job iterates the same list, recording one `job_runs` row per
   (connection, symbol) so a single bad symbol cannot hide the others.
 - Administrators can point the market tabs at any tracked symbol with the
   header switcher; client accounts stay locked to their assigned symbol.
+
+### Data seeding on demand
+
+**Data seeding** in the administrator panel fetches any period into the
+database and rebuilds every derived table from it:
+
+- period presets — today, past week, past month, 3/6 months, 1/2/5 years — or a
+  custom `from`/`to` date range;
+- all tracked symbols or a hand-picked subset;
+- optional timeframe override (15-minute is always included).
+
+It posts to `POST /api/admin/seed` with either `days` or `date_from`/`date_to`,
+runs in the background and reports each symbol in the activity table. Seeding
+is idempotent: candles are upserted, so re-running a period repairs gaps rather
+than duplicating rows.
 
 ### Tokens and the automatic seeder
 

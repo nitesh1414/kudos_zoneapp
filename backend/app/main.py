@@ -22,7 +22,7 @@ from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker
 from .db import Store
 from .instruments import SOURCES, search_instruments
 from .jobs import run_market_close
-from .seeding import DEFAULT_DAYS, recent_runs, seed_all, seed_broker
+from .seeding import DEFAULT_DAYS, date_window, recent_runs, seed_all, seed_broker
 from . import symbols as watchlist
 from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_recap, stats_days, stats_zones)
 
@@ -102,6 +102,13 @@ class BrokerTokenIn(BaseModel):
 class SeedIn(BaseModel):
     days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
     symbols: list[str] | None = None
+class SeedRangeIn(BaseModel):
+    """Either a trailing day count or an explicit date range."""
+    symbols: list[str] | None = None          # None = every tracked symbol
+    days: int | None = Field(default=None, ge=1, le=7300)
+    date_from: str | None = None
+    date_to: str | None = None
+    resolutions: list[str] | None = None
 class SymbolIn(BaseModel):
     symbol: str = Field(min_length=1, max_length=80)
     label: str = ""
@@ -234,23 +241,36 @@ def delete_symbol(symbol:str,purge:bool=False,_=Depends(admin_user)):
     return {"ok":True,"symbol":watchlist.remove(store,symbol,purge_data=purge)}
 
 @app.post("/api/admin/symbols/{symbol:path}/seed")
-def seed_symbol_now(symbol:str,body:SeedIn,background:BackgroundTasks,_=Depends(admin_user)):
+def seed_symbol_now(symbol:str,body:SeedRangeIn,background:BackgroundTasks,_=Depends(admin_user)):
     clean=watchlist.normalize(symbol)
     try: row,_adapter=load_adapter(store,symbol=clean)
     except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
-    background.add_task(seed_broker,store,row["id"],body.days,params(),[clean])
-    return {"ok":True,"seeding":True,"seed_symbols":[clean],
-            "seed_message":f"Backfilling {body.days} days for {clean} in the background."}
+    try: date_from,date_to=date_window(body.days,body.date_from,body.date_to)
+    except ValueError as exc: raise HTTPException(400,str(exc))
+    background.add_task(seed_broker,store,row["id"],None,params(),[clean],date_from,date_to,body.resolutions)
+    return {"ok":True,"seeding":True,"seed_symbols":[clean],"date_from":date_from,"date_to":date_to,
+            "seed_message":f"Fetching {date_from} to {date_to} for {clean} in the background."}
 
 @app.post("/api/admin/seed-all")
 def seed_everything(body:SeedIn,background:BackgroundTasks,_=Depends(admin_user)):
     """Fetch data and rebuild zones for every tracked symbol."""
+    return run_seed(SeedRangeIn(symbols=body.symbols,days=body.days),background)
+
+
+@app.post("/api/admin/seed")
+def run_seed(body:SeedRangeIn,background:BackgroundTasks,_=Depends(admin_user)):
+    """Seed on demand for a chosen period: a trailing day count (past day,
+    past week, past month...) or an explicit from/to date range."""
     try: load_adapter(store)
     except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
-    targets=body.symbols or watchlist.all_symbols(store)
-    background.add_task(seed_all,store,body.days,params())
-    return {"ok":True,"seeding":True,"seed_symbols":targets,
-            "seed_message":f"Backfilling {body.days} days for {len(targets)} symbol(s) in the background."}
+    try: date_from,date_to=date_window(body.days,body.date_from,body.date_to)
+    except ValueError as exc: raise HTTPException(400,str(exc))
+    chosen=[watchlist.normalize(s) for s in body.symbols] if body.symbols else watchlist.all_symbols(store)
+    if not chosen: raise HTTPException(400,"No symbols are being tracked yet")
+    resolutions=[r for r in (body.resolutions or []) if r in INDIA_CANDLE_RESOLUTIONS] or None
+    background.add_task(seed_all,store,None,params(),chosen,date_from,date_to,resolutions)
+    return {"ok":True,"seeding":True,"seed_symbols":chosen,"date_from":date_from,"date_to":date_to,
+            "seed_message":f"Fetching {date_from} to {date_to} for {len(chosen)} symbol(s) in the background."}
 
 
 @app.get("/api/admin/broker-types")

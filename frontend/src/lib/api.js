@@ -65,6 +65,7 @@ export const endpoints = {
   adminSymbol: (s) => `/api/admin/symbols/${encodeURIComponent(s)}`,
   symbolSeed: (s) => `/api/admin/symbols/${encodeURIComponent(s)}/seed`,
   seedAll: '/api/admin/seed-all',
+  seed: '/api/admin/seed',
   brokerToken: (id) => `/api/brokers/${id}/token`,
   fyersUrl: '/api/brokers/fyers/generate-url',
   fyersExchange: '/api/brokers/fyers/exchange-token',

@@ -11,6 +11,7 @@ import Sessions from './pages/Sessions.jsx'
 import MyBroker from './pages/MyBroker.jsx'
 import Clients from './pages/admin/Clients.jsx'
 import Symbols from './pages/admin/Symbols.jsx'
+import Seeding from './pages/admin/Seeding.jsx'
 import Brokers from './pages/admin/Brokers.jsx'
 import Holidays from './pages/admin/Holidays.jsx'
 import Jobs from './pages/admin/Jobs.jsx'
@@ -63,6 +64,14 @@ export default function App() {
           element={
             <Protected adminOnly>
               <Symbols />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/seeding"
+          element={
+            <Protected adminOnly>
+              <Seeding />
             </Protected>
           }
         />

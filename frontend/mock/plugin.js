@@ -106,6 +106,22 @@ export default function mockApi() {
           if (req.method === 'PATCH' && row) { Object.assign(row, body); return json(res, { ok: true }) }
           if (req.method === 'DELETE') { db.symbols = db.symbols.filter((s) => s.symbol !== name); return json(res, { ok: true, symbol: name }) }
         }
+        if (path === '/api/admin/seed') {
+          const names = body.symbols?.length ? body.symbols : db.symbols.filter((s) => s.active).map((s) => s.symbol)
+          const today = new Date().toISOString().slice(0, 10)
+          const from = body.date_from || new Date(Date.now() - (body.days || 180) * 864e5).toISOString().slice(0, 10)
+          const to = body.date_to || today
+          names.forEach((symbol, i) =>
+            db.job_runs.unshift({
+              id: Date.now() + i, job_date: today, broker_id: 1, broker_name: 'Main Fyers account', symbol,
+              kind: 'seed', status: i === 0 ? 'running' : 'success',
+              detail: { date_from: from, date_to: to, bars_ingested: 4820, sessions_scored: 61 },
+              started_at: new Date().toISOString(), finished_at: i === 0 ? null : new Date().toISOString(),
+            }),
+          )
+          return json(res, { ok: true, seeding: true, seed_symbols: names, date_from: from, date_to: to,
+            seed_message: `Fetching ${from} to ${to} for ${names.length} symbol(s) in the background.` })
+        }
         if (path === '/api/admin/seed-all') {
           const names = db.symbols.filter((s) => s.active).map((s) => s.symbol)
           return json(res, { ok: true, seeding: true, seed_symbols: names,

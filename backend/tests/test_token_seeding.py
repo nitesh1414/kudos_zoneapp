@@ -208,5 +208,54 @@ class WatchlistTests(unittest.TestCase):
         self.assertTrue(all(r["broker_id"] == 1 for r in rows))
 
 
+
+
+
+class SeedWindowTests(unittest.TestCase):
+    """The admin seeding tab sends either a day count or explicit dates."""
+
+    def test_trailing_day_count(self):
+        from datetime import date, timedelta
+
+        start, end = seeding.date_window(days=30)
+        self.assertEqual(date.today().isoformat(), end)
+        self.assertEqual((date.today() - timedelta(days=30)).isoformat(), start)
+
+    def test_explicit_range_is_preserved(self):
+        start, end = seeding.date_window(None, "2026-01-01", "2026-03-31")
+        self.assertEqual(("2026-01-01", "2026-03-31"), (start, end))
+
+    def test_end_before_start_is_rejected(self):
+        with self.assertRaises(ValueError):
+            seeding.date_window(None, "2026-03-31", "2026-01-01")
+
+    def test_future_end_is_clamped_to_today(self):
+        from datetime import date
+
+        _, end = seeding.date_window(None, "2026-01-01", "2999-01-01")
+        self.assertEqual(date.today().isoformat(), end)
+
+    def test_seed_all_can_target_a_subset(self):
+        calls = []
+        original = seeding.seed_symbol
+        seeding.seed_symbol = lambda store, broker_id, symbol, *a, **k: calls.append(symbol) or {"ok": True}
+        try:
+            class Store:
+                def q(self, sql, params=None):
+                    if "broker_connections WHERE enabled" in sql:
+                        return pd.DataFrame([{"id": 1, "broker_type": "fake", "resolutions": ["15"],
+                                              "token_expires_at": None}])
+                    if "tracked_symbols" in sql:
+                        return pd.DataFrame([{"symbol": "A", "resolutions": ["15"], "broker_id": None},
+                                             {"symbol": "B", "resolutions": ["15"], "broker_id": None}])
+                    return pd.DataFrame()
+
+            result = seeding.seed_all(Store(), symbols=["b"], date_from="2026-01-01", date_to="2026-02-01")
+            self.assertEqual(["B"], calls)
+            self.assertEqual(1, result["symbols"])
+        finally:
+            seeding.seed_symbol = original
+
+
 if __name__ == "__main__":
     unittest.main()

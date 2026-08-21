@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  Activity, BarChart3, CalendarDays, CalendarRange, CandlestickChart, ChevronDown, Layers,
+  Activity, BarChart3, CalendarDays, CalendarRange, CandlestickChart, ChevronDown, DatabaseZap, Layers,
   LayoutDashboard, LogOut, Menu, PlayCircle, Plug, RefreshCw, Users, X,
 } from 'lucide-react'
 import { useAuth } from '../lib/auth.jsx'
@@ -26,6 +26,7 @@ export const NAV = [
     items: [
       { to: '/admin/clients', label: 'Clients', icon: Users },
       { to: '/admin/symbols', label: 'Market symbols', icon: CandlestickChart },
+      { to: '/admin/seeding', label: 'Data seeding', icon: DatabaseZap },
       { to: '/admin/brokers', label: 'Broker connections', icon: Plug },
       { to: '/admin/holidays', label: 'Market holidays', icon: CalendarDays },
       { to: '/admin/jobs', label: 'Market-close job', icon: PlayCircle },
