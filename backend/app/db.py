@@ -62,14 +62,22 @@ CREATE TABLE IF NOT EXISTS client_brokers (
     user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     broker_id BIGINT REFERENCES broker_connections(id) ON DELETE SET NULL
 );
+CREATE TABLE IF NOT EXISTS tracked_symbols (
+    symbol TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '',
+    resolutions JSONB NOT NULL DEFAULT '["15","D"]'::jsonb,
+    broker_id BIGINT REFERENCES broker_connections(id) ON DELETE SET NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS market_holidays (
     holiday_date DATE PRIMARY KEY, label TEXT NOT NULL DEFAULT 'Market holiday'
 );
 CREATE TABLE IF NOT EXISTS job_runs (
     id BIGSERIAL PRIMARY KEY, job_date DATE NOT NULL, broker_id BIGINT,
-    symbol TEXT NOT NULL, status TEXT NOT NULL, detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+    symbol TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'market-close',
+    status TEXT NOT NULL, detail JSONB NOT NULL DEFAULT '{}'::jsonb,
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(), finished_at TIMESTAMPTZ,
-    UNIQUE(job_date,broker_id,symbol)
+    UNIQUE(job_date,broker_id,symbol,kind)
 );
 CREATE INDEX IF NOT EXISTS idx_bars_symbol_date ON intraday_bars(symbol,d);
 CREATE INDEX IF NOT EXISTS idx_outcomes_symbol_date ON zone_outcomes(symbol,target_date);
@@ -105,6 +113,14 @@ class Store:
             con.execute("ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS token_updated_at TIMESTAMPTZ")
             con.execute("ALTER TABLE broker_connections ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ")
             con.execute("CREATE INDEX IF NOT EXISTS idx_bars_symbol_resolution_date ON intraday_bars(symbol,resolution,d)")
+            # job_runs gained a 'kind' so seeding and the market-close job can
+            # both record a run for the same broker/symbol on the same day.
+            con.execute("ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'market-close'")
+            job_key = con.execute("""SELECT conname, pg_get_constraintdef(oid) definition FROM pg_constraint
+                WHERE conrelid='job_runs'::regclass AND contype='u'""").fetchone()
+            if job_key and "kind" not in job_key["definition"]:
+                con.execute(f'ALTER TABLE job_runs DROP CONSTRAINT "{job_key["conname"]}"')
+                con.execute("ALTER TABLE job_runs ADD CONSTRAINT job_runs_run_key UNIQUE(job_date,broker_id,symbol,kind)")
             pkey = con.execute("SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='intraday_bars'::regclass AND contype='p'").fetchone()
             if pkey and "resolution" not in pkey["definition"]:
                 con.execute("ALTER TABLE intraday_bars DROP CONSTRAINT intraday_bars_pkey")
@@ -194,4 +210,5 @@ class Store:
         row=self.one("""SELECT (SELECT count(*) FROM intraday_bars WHERE symbol=?) bars,
         (SELECT count(DISTINCT target_date) FROM zone_outcomes WHERE symbol=?) sessions,
         (SELECT count(*) FROM zone_outcomes WHERE symbol=?) zone_obs""",[symbol,symbol,symbol])
-        return row
+        # zone_observations is the name the API and UI use.
+        return {**row, "zone_observations": row["zone_obs"]}

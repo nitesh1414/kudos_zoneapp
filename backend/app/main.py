@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -16,21 +16,23 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .auth import (COOKIE_NAME, create_session, decrypt_credentials, delete_session,
                    encrypt_credentials, hash_password, session_user, verify_password)
+from .broker_store import BrokerUnavailable, load_adapter, symbols_for
 from .brokers.base import BrokerError
-from .brokers.csv_adapter import CSVAdapter
 from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker_type, make_broker
 from .db import Store
 from .instruments import SOURCES, search_instruments
 from .jobs import run_market_close
+from .seeding import DEFAULT_DAYS, recent_runs, seed_all, seed_broker
+from . import symbols as watchlist
 from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_recap, stats_days, stats_zones)
 
 API_KEY = os.getenv("ZONEAPP_API_KEY", "")
-UPLOAD_DIR = os.getenv("ZONEAPP_UPLOADS", "./data/uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 store = Store()
 
-app = FastAPI(title="ZoneApp", version="2.0.0", description="Multi-client next-session market zones")
-TEMPLATES = Path(__file__).parent / "templates"
+app = FastAPI(title="ZoneApp", version="3.0.0", description="Multi-client next-session market zones")
+# Compiled React single-page app (frontend/ -> npm run build).
+STATIC = Path(__file__).parent / "static"
+SPA_INDEX = STATIC / "index.html"
 
 
 def bootstrap_admin():
@@ -69,6 +71,14 @@ def params():
     saved=store.kv_get("zone_params"); return ZoneParams(**saved) if saved else ZoneParams()
 
 
+def resolve_symbol(user, symbol: str | None):
+    """Clients are locked to their assigned symbol; administrators may inspect
+    any symbol the platform tracks."""
+    if not symbol or user["role"] != "admin":
+        return user["symbol"]
+    return watchlist.normalize(symbol)
+
+
 class LoginIn(BaseModel): username: str; password: str
 class ClientIn(BaseModel):
     username: str = Field(min_length=3,max_length=80)
@@ -85,6 +95,25 @@ class BrokerIn(BaseModel):
     resolutions: list[str] = Field(default_factory=lambda: list(INDIA_CANDLE_RESOLUTIONS))
 class BrokerTokenIn(BaseModel):
     access_token: str = Field(min_length=10)
+    # Saving a token immediately backfills history for the symbols that
+    # depend on this connection, so other services never see empty tables.
+    seed: bool = True
+    seed_days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
+class SeedIn(BaseModel):
+    days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
+    symbols: list[str] | None = None
+class SymbolIn(BaseModel):
+    symbol: str = Field(min_length=1, max_length=80)
+    label: str = ""
+    resolutions: list[str] | None = None
+    broker_id: int | None = None
+    seed: bool = True
+    seed_days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
+class SymbolPatch(BaseModel):
+    label: str | None = None
+    resolutions: list[str] | None = None
+    broker_id: int | None = None
+    active: bool | None = None
 class TokenExchangeIn(BaseModel):
     auth_code: str = Field(min_length=1)
 class BackfillIn(BaseModel):
@@ -106,27 +135,12 @@ class DashboardQuery(BaseModel):
     date: str | None = None
 
 
-# ------------------------------ DASHBOARD ------------------------------
-@app.get("/", response_class=HTMLResponse)
-def dashboard(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    """Serve the NIFTY 50 Trading Levels & Analytics dashboard.
-
-    The same single-page dashboard is the entry point for admin, client and
-    even anonymous visitors. The page reads /api/dashboard which falls back
-    to the default symbol when no session cookie is present.
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "templates", "index.html")) as f:
-        return f.read()
-@app.get("/login")
-def login_page(): return FileResponse(TEMPLATES/"login.html")
-@app.get("/admin")
-def admin_page(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    user=session_user(store,token)
-    return FileResponse(TEMPLATES/"admin.html") if user and user["role"]=="admin" else RedirectResponse("/login")
-@app.get("/app")
-def client_page(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    return FileResponse(TEMPLATES/"client.html") if session_user(store,token) else RedirectResponse("/login")
+# ------------------------------ ENTRY POINT ------------------------------
+@app.get("/")
+def root(token: str|None=Cookie(None,alias=COOKIE_NAME)):
+    """There is no public landing page: visitors always start at the login
+    screen and land on the dashboard once a session exists."""
+    return RedirectResponse("/dashboard/overview" if session_user(store,token) else "/login")
 
 
 @app.post("/api/auth/login")
@@ -155,7 +169,7 @@ def clients(_=Depends(admin_user)):
 def add_client(body:ClientIn,_=Depends(admin_user)):
     try:
         with store.connection() as con:
-            user=con.execute("INSERT INTO users(username,display_name,password_hash,role,symbol) VALUES (%s,%s,%s,'client',%s) RETURNING id",[body.username.strip().lower(),body.display_name.strip(),hash_password(body.password),body.symbol.strip()]).fetchone()
+            user=con.execute("INSERT INTO users(username,display_name,password_hash,role,symbol) VALUES (%s,%s,%s,'client',%s) RETURNING id",[body.username.strip().lower(),body.display_name.strip(),hash_password(body.password),watchlist.normalize(body.symbol)]).fetchone()
             if body.broker_id: con.execute("INSERT INTO client_brokers(user_id,broker_id) VALUES (%s,%s)",[user["id"],body.broker_id])
         return {"ok":True,"id":user["id"]}
     except Exception as exc:
@@ -164,7 +178,9 @@ def add_client(body:ClientIn,_=Depends(admin_user)):
 @app.patch("/api/admin/clients/{user_id}")
 def update_client(user_id:int,body:ClientPatch,_=Depends(admin_user)):
     updates=[]; values=[]
-    for col,val in (("display_name",body.display_name),("symbol",body.symbol),("active",body.active)):
+    for col,val in (("display_name",body.display_name),
+                    ("symbol",watchlist.normalize(body.symbol) if body.symbol else None),
+                    ("active",body.active)):
         if val is not None: updates.append(f"{col}=?"); values.append(val)
     if body.password is not None: updates.append("password_hash=?"); values.append(hash_password(body.password))
     if updates: store.exec(f"UPDATE users SET {','.join(updates)} WHERE id=? AND role='client'",values+[user_id])
@@ -172,6 +188,70 @@ def update_client(user_id:int,body:ClientPatch,_=Depends(admin_user)):
         if body.broker_id: store.exec("INSERT INTO client_brokers(user_id,broker_id) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET broker_id=excluded.broker_id",[user_id,body.broker_id])
         else: store.exec("DELETE FROM client_brokers WHERE user_id=?",[user_id])
     return {"ok":True}
+
+@app.delete("/api/admin/clients/{user_id}")
+def delete_client(user_id:int,_=Depends(admin_user)):
+    """Remove a client login. Sessions and the broker assignment cascade."""
+    row=store.one("SELECT id FROM users WHERE id=? AND role='client'",[user_id])
+    if not row: raise HTTPException(404,"Client not found")
+    store.exec("DELETE FROM users WHERE id=? AND role='client'",[user_id])
+    return {"ok":True}
+
+# ------------------------------ SYMBOL WATCHLIST ------------------------------
+@app.get("/api/symbols")
+def list_symbols(user=Depends(current_user)):
+    """Symbols the platform tracks. Clients see the list read-only so they know
+    what their administrator can assign them."""
+    return watchlist.tracked(store, active_only=user["role"] != "admin")
+
+@app.post("/api/admin/symbols")
+def add_symbol(body:SymbolIn,background:BackgroundTasks,_=Depends(admin_user)):
+    try: symbol=watchlist.add(store,body.symbol,body.label,body.resolutions,body.broker_id)
+    except ValueError as exc: raise HTTPException(400,str(exc))
+    seeded=False
+    if body.seed:
+        try:
+            row,_adapter=load_adapter(store,broker_id=body.broker_id)
+            background.add_task(seed_broker,store,row["id"],body.seed_days,params(),[symbol])
+            seeded=True
+        except BrokerUnavailable:
+            seeded=False  # symbol is tracked; it will fill in once a token exists
+    return {"ok":True,"symbol":symbol,"seeding":seeded,
+            "seed_message":(f"Backfilling {body.seed_days} days for {symbol} in the background."
+                            if seeded else "Symbol added. Add a broker token to fetch its data.")}
+
+@app.patch("/api/admin/symbols/{symbol:path}")
+def update_symbol(symbol:str,body:SymbolPatch,_=Depends(admin_user)):
+    watchlist.update(store,symbol,label=body.label,resolutions=body.resolutions,
+                     broker_id=body.broker_id,active=body.active,
+                     broker_set="broker_id" in body.model_fields_set)
+    return {"ok":True}
+
+@app.delete("/api/admin/symbols/{symbol:path}")
+def delete_symbol(symbol:str,purge:bool=False,_=Depends(admin_user)):
+    """Stop tracking a symbol. `purge=true` also deletes its stored candles,
+    zone sheets and outcomes."""
+    return {"ok":True,"symbol":watchlist.remove(store,symbol,purge_data=purge)}
+
+@app.post("/api/admin/symbols/{symbol:path}/seed")
+def seed_symbol_now(symbol:str,body:SeedIn,background:BackgroundTasks,_=Depends(admin_user)):
+    clean=watchlist.normalize(symbol)
+    try: row,_adapter=load_adapter(store,symbol=clean)
+    except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
+    background.add_task(seed_broker,store,row["id"],body.days,params(),[clean])
+    return {"ok":True,"seeding":True,"seed_symbols":[clean],
+            "seed_message":f"Backfilling {body.days} days for {clean} in the background."}
+
+@app.post("/api/admin/seed-all")
+def seed_everything(body:SeedIn,background:BackgroundTasks,_=Depends(admin_user)):
+    """Fetch data and rebuild zones for every tracked symbol."""
+    try: load_adapter(store)
+    except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
+    targets=body.symbols or watchlist.all_symbols(store)
+    background.add_task(seed_all,store,body.days,params())
+    return {"ok":True,"seeding":True,"seed_symbols":targets,
+            "seed_message":f"Backfilling {body.days} days for {len(targets)} symbol(s) in the background."}
+
 
 @app.get("/api/admin/broker-types")
 def types(_=Depends(admin_user)): return broker_types()
@@ -183,7 +263,7 @@ def brokers(_=Depends(admin_user)):
              WHEN token_expires_at<=now()+interval '3 hours' THEN 'expiring' ELSE 'valid' END token_status
         FROM broker_connections ORDER BY id""").to_dict("records")
 @app.post("/api/admin/brokers")
-def add_broker(body:BrokerIn,_=Depends(admin_user)):
+def add_broker(body:BrokerIn,background:BackgroundTasks,_=Depends(admin_user)):
     spec=next((x for x in broker_types() if x["key"]==body.broker_type),None)
     if not spec: raise HTTPException(400,"Unsupported broker type")
     # Only fields marked as required (default True) are mandatory
@@ -201,9 +281,13 @@ def add_broker(body:BrokerIn,_=Depends(admin_user)):
     row=store.one("""INSERT INTO broker_connections(name,broker_type,credentials,resolutions,token_updated_at,token_expires_at,enabled)
         VALUES (?,?,?::jsonb,?::jsonb,?,?,?) RETURNING id""",
         [body.name,body.broker_type,json.dumps(encrypt_credentials(body.credentials)),json.dumps(selected),now if expiry else None,expiry,body.enabled])
-    return {"ok":True,"id":row["id"]}
+    seeded=[]
+    if body.credentials.get("access_token"):
+        seeded=symbols_for(store,row["id"])
+        background.add_task(seed_broker,store,row["id"],DEFAULT_DAYS,params(),seeded)
+    return {"ok":True,"id":row["id"],"seeding":bool(seeded),"seed_symbols":seeded}
 @app.post("/api/brokers/{broker_id}/token")
-def update_broker_token(broker_id:int,body:BrokerTokenIn,user=Depends(current_user)):
+def update_broker_token(broker_id:int,body:BrokerTokenIn,background:BackgroundTasks,user=Depends(current_user)):
     row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
     if not row: raise HTTPException(404,"Broker not found")
     if user["role"] != "admin" and not store.one("SELECT 1 ok FROM client_brokers WHERE user_id=? AND broker_id=?",[user["id"],broker_id]):
@@ -216,7 +300,31 @@ def update_broker_token(broker_id:int,body:BrokerTokenIn,user=Depends(current_us
     expires=now+timedelta(hours=kind.token_ttl_hours) if kind.token_ttl_hours else None
     store.exec("UPDATE broker_connections SET credentials=?::jsonb,token_updated_at=?,token_expires_at=?,updated_at=now() WHERE id=?",
                [json.dumps(encrypt_credentials(credentials)),now,expires,broker_id])
-    return {"ok":True,"connected":True,"message":status.message,"expires_at":expires}
+    seeded=[]
+    if body.seed:
+        seeded=symbols_for(store,broker_id) if user["role"]=="admin" else [user["symbol"]]
+        background.add_task(seed_broker,store,broker_id,body.seed_days,params(),seeded)
+    return {"ok":True,"connected":True,"message":status.message,"expires_at":expires,
+            "seeding":bool(seeded),"seed_symbols":seeded,
+            "seed_message":(f"Backfilling {body.seed_days} days for {', '.join(seeded)} in the background."
+                            if seeded else "Token saved.")}
+
+
+@app.post("/api/admin/brokers/{broker_id}/seed")
+def seed_now(broker_id:int,body:SeedIn,background:BackgroundTasks,_=Depends(admin_user)):
+    """Run the seeder for this connection (also runs automatically after a
+    token is saved)."""
+    try: load_adapter(store,broker_id=broker_id)
+    except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
+    targets=body.symbols or symbols_for(store,broker_id)
+    background.add_task(seed_broker,store,broker_id,body.days,params(),targets)
+    return {"ok":True,"seeding":True,"seed_symbols":targets,
+            "seed_message":f"Backfilling {body.days} days for {', '.join(targets)} in the background."}
+
+
+@app.get("/api/admin/job-runs")
+def job_runs(limit:int=20,_=Depends(admin_user)):
+    return recent_runs(store,min(max(limit,1),100))
 
 @app.get("/api/brokers/fyers/generate-url")
 def fyers_generate_url(_=Depends(admin_user)):
@@ -243,10 +351,9 @@ def delete_broker(broker_id:int,_=Depends(admin_user)):
     store.exec("DELETE FROM broker_connections WHERE id=?",[broker_id]); return {"ok":True}
 @app.post("/api/admin/brokers/{broker_id}/test")
 def test_broker(broker_id:int,_=Depends(admin_user)):
-    row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
-    if not row: raise HTTPException(404,"Broker not found")
     try:
-        status=make_broker(row["broker_type"],decrypt_credentials(row["credentials"])).auth_status()
+        _,adapter=load_adapter(store,broker_id=broker_id)
+        status=adapter.auth_status()
         return {"connected":status.connected,"message":status.message}
     except Exception as exc: return {"connected":False,"message":str(exc)}
 
@@ -261,7 +368,9 @@ def backfill_broker(broker_id:int,body:BackfillIn,_=Depends(admin_user)):
     except ValueError: raise HTTPException(400,"Dates must be YYYY-MM-DD")
     resolutions=body.resolutions or row["resolutions"]
     if any(r not in INDIA_CANDLE_RESOLUTIONS for r in resolutions): raise HTTPException(400,"Unsupported resolution")
-    adapter=make_broker(row["broker_type"],decrypt_credentials(row["credentials"])); counts={}
+    try: _,adapter=load_adapter(store,broker_id=broker_id)
+    except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
+    counts={}
     try:
         for resolution in resolutions:
             frame=adapter.fetch_historical(body.symbol,resolution,body.date_from,date_to)
@@ -271,35 +380,31 @@ def backfill_broker(broker_id:int,body:BackfillIn,_=Depends(admin_user)):
     return {"ok":True,"symbol":body.symbol,"by_resolution":counts,**result}
 
 
-@app.get("/api/dashboard/public")
-def dashboard_public(date:str|None=None):
-    """Same payload as /api/dashboard, but uses the default symbol from
-    ZONEAPP_SYMBOL and works for unauthenticated visitors."""
-    symbol = os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX")
-    payload = dashboard_payload(store, symbol, params())
-    payload["authenticated"] = False
-    payload["can_edit"] = False
-    if date:
-        r = session_recap(store, symbol, date, params())
-        m = match_check(store, symbol, date, params())
-        if r: payload["session_recap"] = r
-        if m: payload["match_check"] = m
+def _strip_stars(payload: dict):
+    """Star ratings are an administrator-only detail; clients see the base
+    rates (touch/hold) instead, which is what the numbers actually mean."""
+    for row in payload.get("zones", {}).get("rows", []) or []:
+        row.pop("stars", None); row.pop("weight", None)
+    for row in (payload.get("session_recap") or {}).get("zones", []) or []:
+        row.pop("stars", None); row.pop("weight", None)
     return payload
 
+
 @app.get("/api/dashboard")
-def dashboard(date:str|None=None,user=Depends(current_user)):
+def dashboard(date:str|None=None,symbol:str|None=None,user=Depends(current_user)):
     """Single round-trip payload for the client dashboard UI."""
-    payload = dashboard_payload(store, user["symbol"], params())
+    active = resolve_symbol(user, symbol)
+    payload = dashboard_payload(store, active, params())
     payload["authenticated"] = True
     payload["role"] = user["role"]
     payload["username"] = user["username"]
     payload["can_edit"] = (user["role"] == "admin")
     if date:
-        r = session_recap(store, user["symbol"], date, params())
-        m = match_check(store, user["symbol"], date, params())
+        r = session_recap(store, active, date, params())
+        m = match_check(store, active, date, params())
         if r: payload["session_recap"] = r
         if m: payload["match_check"] = m
-    return payload
+    return payload if user["role"] == "admin" else _strip_stars(payload)
 
 # Client result APIs; symbol always comes from the authenticated account.
 @app.get("/api/my/broker")
@@ -319,17 +424,21 @@ def instruments(q:str="",segment:str|None=None,limit:int=100,_=Depends(current_u
     return {"items":search_instruments(q,segment,min(max(limit,1),200)),"segments":list(SOURCES)}
 
 @app.get("/api/candles")
-def candles(resolution:str="15",limit:int=500,user=Depends(current_user)):
+def candles(resolution:str="15",limit:int=500,symbol:str|None=None,user=Depends(current_user)):
     if resolution not in INDIA_CANDLE_RESOLUTIONS: raise HTTPException(400,"Unsupported resolution")
-    return store.recent_bars(user["symbol"],resolution,min(max(limit,1),5000)).to_dict("records")
+    return store.recent_bars(resolve_symbol(user,symbol),resolution,min(max(limit,1),5000)).to_dict("records")
 
 @app.get("/api/health")
-def health(user=Depends(current_user)):
-    symbol=user["symbol"]; c=store.counts(symbol)
-    return {"ok":True,"symbol":symbol,**c,"server_time":datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")}
+def health(symbol:str|None=None,user=Depends(current_user)):
+    symbol=resolve_symbol(user,symbol); c=store.counts(symbol)
+    broker=store.one("""SELECT b.name FROM client_brokers cb JOIN broker_connections b ON b.id=cb.broker_id
+        WHERE cb.user_id=?""",[user["id"]]) if user["role"]!="admin" else store.one(
+        "SELECT name FROM broker_connections WHERE enabled=true ORDER BY id LIMIT 1")
+    return {"ok":True,"symbol":symbol,**c,"broker":(broker or {}).get("name") or "Not connected",
+            "server_time":datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")}
 @app.get("/api/levels/next")
-def levels_next(user=Depends(current_user)):
-    sheet=next_session_sheet(store,user["symbol"],params())
+def levels_next(symbol:str|None=None,user=Depends(current_user)):
+    sheet=next_session_sheet(store,resolve_symbol(user,symbol),params())
     if sheet is None: raise HTTPException(404,"No complete session available")
     result=sheet.dict()
     for zone in result["resistances"]+result["supports"]+([result["at_zone"]] if result.get("at_zone") else []):
@@ -337,11 +446,14 @@ def levels_next(user=Depends(current_user)):
     result["disclaimer"]="Reference map from the last completed session; not a trade signal or forecast."
     return result
 @app.get("/api/stats/zones")
-def zone_stats(user=Depends(current_user)): return stats_zones(store,user["symbol"])
+def zone_stats(symbol:str|None=None,user=Depends(current_user)):
+    stats=stats_zones(store,resolve_symbol(user,symbol))
+    if user["role"]!="admin": stats.pop("by_stars",None)  # star rating is admin-only
+    return stats
 @app.get("/api/stats/days")
-def day_stats(user=Depends(current_user)): return stats_days(store,user["symbol"])
+def day_stats(symbol:str|None=None,user=Depends(current_user)): return stats_days(store,resolve_symbol(user,symbol))
 @app.get("/api/sessions")
-def sessions(limit:int=20,user=Depends(current_user)): return recent_sessions(store,user["symbol"],min(max(limit,1),200))
+def sessions(limit:int=20,symbol:str|None=None,user=Depends(current_user)): return recent_sessions(store,resolve_symbol(user,symbol),min(max(limit,1),200))
 
 @app.get("/api/admin/gift-nifty")
 def get_gift_nifty(_=Depends(admin_user)):
@@ -359,12 +471,6 @@ def put_gift_nifty(body: GiftNiftyIn, _=Depends(admin_user)):
     store.kv_set("dashboard_gift_nifty", payload)
     return {"ok": True, "payload": payload}
 
-@app.post("/api/admin/ingest/csv")
-async def ingest_csv(symbol:str,file:UploadFile=File(...),_=Depends(admin_user)):
-    safe=Path(file.filename or "upload.csv").name; path=Path(UPLOAD_DIR)/safe; path.write_bytes(await file.read())
-    try: df=CSVAdapter(str(path)).fetch_historical(symbol,"15","1900-01-01","2100-01-01")
-    except BrokerError as exc: raise HTTPException(400,str(exc))
-    n=store.upsert_bars(df,symbol,"csv"); return {"bars_ingested":n,**run_eod(store,symbol,params(),True)}
 @app.get("/api/admin/holidays")
 def holidays(_=Depends(admin_user)):
     return store.q("SELECT holiday_date,label FROM market_holidays ORDER BY holiday_date DESC").to_dict("records")
@@ -382,3 +488,22 @@ def market_job(force:bool=False,_=Depends(admin_user)): return run_market_close(
 @app.post("/api/jobs/market-close")
 def cron_market_job(force:bool=False,x_api_key:Optional[str]=Header(None)):
     require_job_key(x_api_key); return run_market_close(store,params(),force=force)
+
+
+# ------------------------------ SINGLE-PAGE APP ------------------------------
+# Everything that is not an /api route is handed to the React build, which
+# renders the login screen first and the tabbed dashboard once signed in.
+if (STATIC / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(404, "Not found")
+    asset = (STATIC / full_path)
+    if full_path and asset.is_file():
+        return FileResponse(asset)
+    if not SPA_INDEX.is_file():
+        raise HTTPException(503, "Frontend build is missing. Run: cd frontend && npm install && npm run build")
+    return FileResponse(SPA_INDEX)

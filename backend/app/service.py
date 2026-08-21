@@ -452,7 +452,12 @@ def dashboard_payload(store, symbol: str, p: ZoneParams = None):
             date=str(basis.d),
             high=float(basis.h), low=float(basis.l), close=float(basis.c),
             range_pct=round(float(rng_pct), 2),
+            cpr_pct=round(float(sheet.cpr_pct), 3) if sheet is not None else None,
         )
+
+    # Historical touch/hold rate for each zone's strength band, so the client
+    # dashboard can show the base rate without exposing the star rating.
+    rate_by_star = {str(r['group']): r for r in stats_zones(store, symbol).get('by_stars', [])}
 
     zones_panel = dict(basis=basis_meta, day_type=None, rows=[])
     if sheet is not None and basis is not None:
@@ -471,6 +476,8 @@ def dashboard_payload(store, symbol: str, p: ZoneParams = None):
                 weight=z.weight, stars=z.stars,
                 kind=kind,
                 dist_from_pdc=round(z.key - float(basis.c), 1),
+                touch_pct=rate_by_star.get(str(z.stars), {}).get('touch_pct'),
+                hold_pct=rate_by_star.get(str(z.stars), {}).get('hold_pct'),
             ))
         zones_panel['rows'] = rows
 
