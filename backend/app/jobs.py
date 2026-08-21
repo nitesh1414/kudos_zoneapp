@@ -1,10 +1,14 @@
-"""Idempotent post-market ingestion and zone calculation job."""
+"""Idempotent post-market ingestion and zone calculation job.
+
+It runs for **every** symbol the platform tracks: the administrator watchlist
+plus any symbol a client account points at. Each (connection, symbol) pair is
+recorded separately in ``job_runs`` so one failing symbol never hides another.
+"""
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .auth import decrypt_credentials
-from .brokers.registry import make_broker
+from .broker_store import load_adapter
 from .service import ZoneParams, run_eod
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -17,6 +21,37 @@ def is_market_day(store, day):
     return (False, holiday["label"]) if holiday else (True, "Trading weekday")
 
 
+def targets(store):
+    """Every (broker, symbol) pair that must be refreshed today."""
+    brokers = store.q("""SELECT id, broker_type, resolutions, token_expires_at
+        FROM broker_connections WHERE enabled = true
+        ORDER BY token_expires_at DESC NULLS LAST, id""")
+    if brokers.empty:
+        return []
+    brokers = brokers.to_dict("records")
+    by_id = {b["id"]: b for b in brokers}
+    fallback = brokers[0]
+
+    pairs = {}
+    clients = store.q("""SELECT DISTINCT cb.broker_id, u.symbol FROM client_brokers cb
+        JOIN users u ON u.id = cb.user_id JOIN broker_connections b ON b.id = cb.broker_id
+        WHERE b.enabled = true AND u.active = true""")
+    for row in ([] if clients.empty else clients.to_dict("records")):
+        broker = by_id.get(row["broker_id"])
+        if broker:
+            pairs[(broker["id"], row["symbol"])] = dict(
+                broker_id=broker["id"], broker_type=broker["broker_type"],
+                symbol=row["symbol"], resolutions=broker["resolutions"] or ["15", "D"])
+
+    watchlist = store.q("SELECT symbol, resolutions, broker_id FROM tracked_symbols WHERE active = true")
+    for row in ([] if watchlist.empty else watchlist.to_dict("records")):
+        broker = by_id.get(row["broker_id"]) or fallback
+        pairs.setdefault((broker["id"], row["symbol"]), dict(
+            broker_id=broker["id"], broker_type=broker["broker_type"],
+            symbol=row["symbol"], resolutions=row["resolutions"] or broker["resolutions"] or ["15", "D"]))
+    return list(pairs.values())
+
+
 def run_market_close(store, params: ZoneParams | None = None, now=None, force=False):
     now = now or datetime.now(IST)
     now = now.replace(tzinfo=IST) if now.tzinfo is None else now.astimezone(IST)
@@ -27,39 +62,37 @@ def run_market_close(store, params: ZoneParams | None = None, now=None, force=Fa
     if now.hour < 16 and not force:
         return {"ok": True, "skipped": True, "reason": "Market has not closed", "date": str(day), "runs": []}
 
-    assignments = store.q("""SELECT DISTINCT b.id broker_id,b.broker_type,b.credentials,b.resolutions,b.token_expires_at,u.symbol
-        FROM broker_connections b JOIN client_brokers cb ON cb.broker_id=b.id
-        JOIN users u ON u.id=cb.user_id
-        WHERE b.enabled=true AND u.active=true""")
     runs = []
-    for row in assignments.to_dict("records"):
-        existing = store.one("SELECT status FROM job_runs WHERE job_date=? AND broker_id=? AND symbol=?", [day,row["broker_id"],row["symbol"]])
+    for row in targets(store):
+        existing = store.one("SELECT status FROM job_runs WHERE job_date=? AND broker_id=? AND symbol=? AND kind='market-close'",
+                             [day, row["broker_id"], row["symbol"]])
         if existing and existing["status"] == "success" and not force:
             runs.append({"broker_id": row["broker_id"], "symbol": row["symbol"], "status": "already-complete"})
             continue
-        store.exec("""INSERT INTO job_runs(job_date,broker_id,symbol,status) VALUES (?,?,?,'running')
-            ON CONFLICT(job_date,broker_id,symbol) DO UPDATE SET status='running',started_at=now(),finished_at=NULL""", [day,row["broker_id"],row["symbol"]])
+        store.exec("""INSERT INTO job_runs(job_date,broker_id,symbol,kind,status) VALUES (?,?,?,'market-close','running')
+            ON CONFLICT(job_date,broker_id,symbol,kind) DO UPDATE SET status='running',started_at=now(),finished_at=NULL""",
+            [day, row["broker_id"], row["symbol"]])
         try:
-            expiry=row.get("token_expires_at")
-            if expiry and expiry <= now.astimezone(expiry.tzinfo):
-                raise RuntimeError("Broker access token has expired; add today's token")
-            adapter = make_broker(row["broker_type"], decrypt_credentials(row["credentials"]))
+            # Stored credentials are the single source of truth for every service.
+            _, adapter = load_adapter(store, broker_id=row["broker_id"])
             start = (day - timedelta(days=10)).isoformat()
-            resolutions=row.get("resolutions") or ["15","D"]
-            ingested, warnings={}, {}
-            for resolution in resolutions:
+            ingested, warnings = {}, {}
+            for resolution in (row["resolutions"] or ["15", "D"]):
                 try:
-                    bars = adapter.fetch_historical(row["symbol"], resolution, start, day.isoformat())
+                    bars = adapter.fetch_historical(row["symbol"], str(resolution), start, day.isoformat())
                     ingested[str(resolution)] = store.upsert_bars(bars, row["symbol"], row["broker_type"], str(resolution))
                 except Exception as exc:
                     warnings[str(resolution)] = str(exc)
             if "15" not in ingested:
                 raise RuntimeError(f"Required 15-minute candle sync failed: {warnings.get('15','not configured')}")
             result = run_eod(store, row["symbol"], params or ZoneParams(), rebuild_all=False)
-            detail = {"bars_ingested": sum(ingested.values()), "by_resolution": ingested, "timeframe_warnings": warnings, **result}
+            detail = {"bars_ingested": sum(ingested.values()), "by_resolution": ingested,
+                      "timeframe_warnings": warnings, **result}
             status = "success" if result.get("ok") else "failed"
         except Exception as exc:
             status, detail = "failed", {"error": str(exc)}
-        store.exec("UPDATE job_runs SET status=?,detail=?::jsonb,finished_at=now() WHERE job_date=? AND broker_id=? AND symbol=?", [status,json.dumps(detail),day,row["broker_id"],row["symbol"]])
+        store.exec("UPDATE job_runs SET status=?,detail=?::jsonb,finished_at=now() WHERE job_date=? AND broker_id=? AND symbol=? AND kind='market-close'",
+                   [status, json.dumps(detail), day, row["broker_id"], row["symbol"]])
         runs.append({"broker_id": row["broker_id"], "symbol": row["symbol"], "status": status, **detail})
-    return {"ok": all(r["status"] in ("success","already-complete") for r in runs), "date": str(day), "runs": runs}
+    return {"ok": all(r["status"] in ("success", "already-complete") for r in runs),
+            "date": str(day), "symbols": len(runs), "runs": runs}

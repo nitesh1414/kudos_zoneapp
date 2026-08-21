@@ -12,8 +12,15 @@ rates. It does **not** place orders or produce trading advice.
   hypertable when the extension is available
 - `backend/app/brokers/` — provider-independent `BrokerAdapter`, registry, CSV
   adapter and Fyers implementation
-- `backend/app/main.py` — authentication plus admin/client APIs
-- `backend/app/templates/` — separate login, admin and client interfaces
+- `backend/app/main.py` — authentication, admin/client APIs and single-page-app hosting
+- `frontend/` — React + Vite interface (login screen, tabbed client dashboard,
+  tabbed admin panel). `npm run build` compiles it into `backend/app/static/`,
+  which FastAPI serves
+- `backend/app/symbols.py` — administrator watchlist of tracked symbols
+- `backend/app/broker_store.py` — the single resolver that turns a stored,
+  encrypted broker connection into a ready adapter for every dependent service
+- `backend/app/seeding.py` — historical backfill that runs automatically after
+  a token is saved
 - `backend/app/jobs.py` — idempotent trading-day market-close worker
 - `deploy/` — systemd, nginx and 17:00 Asia/Kolkata cron examples
 
@@ -26,7 +33,9 @@ and base-rate tables are derived and can be rebuilt.
 docker compose up --build
 ```
 
-Open <http://localhost:8000>. The local compose credentials are:
+Open <http://localhost:8000>. There is no public landing page — the first
+screen is always the login form, and everything else lives behind it as tabs.
+The local compose credentials are:
 
 - username: `admin`
 - password: `local-admin-password`
@@ -49,14 +58,51 @@ uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 The application reads `backend/.env` itself; it does not require Docker or
 machine-level environment configuration.
 
+## Tests
+
+```bash
+# unit tests — no services required
+python -m unittest discover -s backend/tests
+
+# full end-to-end suite against a throwaway PostgreSQL
+pip install pgserver
+python -c "import pgserver;print(pgserver.get_server('/tmp/pgdata').get_uri())"
+DATABASE_URL=<printed uri> python -m unittest discover -s backend/tests
+```
+
+The end-to-end module (`backend/tests/test_integration_postgres.py`) swaps in a
+synthetic broker, so it needs no credentials or network. It covers login and
+role separation, broker creation, token save → automatic seeding, seeding by
+day count and by date range, the symbol watchlist, client CRUD, the
+market-close job (including weekend/holiday skips, idempotency and the cron API
+key), JSON-safety of nullable columns, and forward migration from an older
+database.
+
+## Frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev        # Vite dev server on :5173, proxies /api to :8000
+npm run dev:mock   # same UI against built-in demo data, no database needed
+npm run build      # writes backend/app/static/ (committed, so plain uvicorn works)
+```
+
+Market data is ingested through broker connections and the market-close job;
+there is no CSV upload in the interface.
+
 ## Administrator workflow
 
 1. Sign in at `/login` and open **Broker connections**.
 2. Add credentials for a registered provider and use **Test**.
 3. Open **Client management**, create a login, select its broker, and assign a
    symbol in that provider's symbol format.
-4. The client signs in through the same login page and is redirected to the
-   separate `/app` result view. A client can only query their assigned symbol.
+4. The client signs in through the same login page and lands on the same
+   dashboard; the Administration tabs are only rendered for administrators.
+   A client can only query their assigned symbol.
+
+Client management supports create, edit (name, symbol, password reset, broker),
+enable/disable and delete, in either a card or a table view.
 
 The symbol picker searches Fyers' complete Indian symbol masters for NSE cash
 and indices, NSE derivatives/currency, BSE cash/derivatives, and MCX
@@ -69,6 +115,57 @@ completed 15-minute candles.
 
 Broker credentials are Fernet-encrypted in PostgreSQL. Keep
 `ZONEAPP_ENCRYPTION_KEY` stable and outside source control.
+
+### Tracking many symbols
+
+**Market symbols** in the administrator panel is the watchlist. Every active
+entry is fetched and run through the zone engine on its own, whether or not a
+client is assigned to it, and each symbol keeps its own candles, zone sheets,
+outcomes and base rates.
+
+- Aliases are expanded on entry (`NIFTY` → `NSE:NIFTY50-INDEX`, `BANKNIFTY`,
+  `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`); anything else is passed to the provider
+  unchanged, so `NSE:RELIANCE-EQ` or `MCX:CRUDEOIL25AUGFUT` work too.
+- Per symbol you can choose timeframes (15-minute is always included) and pin a
+  specific broker connection, or leave it on any enabled connection.
+- `POST /api/admin/symbols` adds and immediately backfills one symbol,
+  `POST /api/admin/symbols/{symbol}/seed` refetches it, and
+  `POST /api/admin/seed` runs an on-demand fetch for a chosen period.
+- The market-close job iterates the same list, recording one `job_runs` row per
+  (connection, symbol) so a single bad symbol cannot hide the others.
+- Administrators can point the market tabs at any tracked symbol with the
+  header switcher; client accounts stay locked to their assigned symbol.
+
+### Data seeding on demand
+
+**Data seeding** in the administrator panel fetches any period into the
+database and rebuilds every derived table from it:
+
+- period presets — today, past week, past month, 3/6 months, 1/2/5 years — or a
+  custom `from`/`to` date range;
+- all tracked symbols or a hand-picked subset;
+- optional timeframe override (15-minute is always included).
+
+It posts to `POST /api/admin/seed` with either `days` or `date_from`/`date_to`,
+runs in the background and reports each symbol in the activity table. Seeding
+is idempotent: candles are upserted, so re-running a period repairs gaps rather
+than duplicating rows.
+
+### Tokens and the automatic seeder
+
+A token saved in the UI is stored on the broker connection and is the single
+source of truth. `backend/app/broker_store.py` resolves it for every dependent
+service — the market-close job, the seeder, `scripts/seed.py`,
+`backend/scripts/backfill_data.py` and `verify_fyers.py` — so none of them fall
+back to "token not found" after an administrator adds one. Environment
+variables (`FYERS_ACCESS_TOKEN`) are only used when no stored connection has a
+token, which keeps standalone CLI runs working.
+
+Saving a token immediately starts a background seed: candles are fetched for
+every symbol that depends on the connection and zones plus base rates are
+rebuilt. Progress is visible under **Broker connections → Data sync activity**
+and can be re-triggered from the same page (`POST /api/admin/brokers/{id}/seed`,
+default 180 days).
 
 ### Adding another broker provider
 
