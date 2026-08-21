@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -16,11 +16,13 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from .auth import (COOKIE_NAME, create_session, decrypt_credentials, delete_session,
                    encrypt_credentials, hash_password, session_user, verify_password)
+from .broker_store import BrokerUnavailable, load_adapter, symbols_for
 from .brokers.base import BrokerError
 from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker_type, make_broker
 from .db import Store
 from .instruments import SOURCES, search_instruments
 from .jobs import run_market_close
+from .seeding import DEFAULT_DAYS, recent_runs, seed_broker
 from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_recap, stats_days, stats_zones)
 
 API_KEY = os.getenv("ZONEAPP_API_KEY", "")
@@ -84,6 +86,13 @@ class BrokerIn(BaseModel):
     resolutions: list[str] = Field(default_factory=lambda: list(INDIA_CANDLE_RESOLUTIONS))
 class BrokerTokenIn(BaseModel):
     access_token: str = Field(min_length=10)
+    # Saving a token immediately backfills history for the symbols that
+    # depend on this connection, so other services never see empty tables.
+    seed: bool = True
+    seed_days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
+class SeedIn(BaseModel):
+    days: int = Field(default=DEFAULT_DAYS, ge=5, le=3650)
+    symbols: list[str] | None = None
 class TokenExchangeIn(BaseModel):
     auth_code: str = Field(min_length=1)
 class BackfillIn(BaseModel):
@@ -175,7 +184,7 @@ def brokers(_=Depends(admin_user)):
              WHEN token_expires_at<=now()+interval '3 hours' THEN 'expiring' ELSE 'valid' END token_status
         FROM broker_connections ORDER BY id""").to_dict("records")
 @app.post("/api/admin/brokers")
-def add_broker(body:BrokerIn,_=Depends(admin_user)):
+def add_broker(body:BrokerIn,background:BackgroundTasks,_=Depends(admin_user)):
     spec=next((x for x in broker_types() if x["key"]==body.broker_type),None)
     if not spec: raise HTTPException(400,"Unsupported broker type")
     # Only fields marked as required (default True) are mandatory
@@ -193,9 +202,13 @@ def add_broker(body:BrokerIn,_=Depends(admin_user)):
     row=store.one("""INSERT INTO broker_connections(name,broker_type,credentials,resolutions,token_updated_at,token_expires_at,enabled)
         VALUES (?,?,?::jsonb,?::jsonb,?,?,?) RETURNING id""",
         [body.name,body.broker_type,json.dumps(encrypt_credentials(body.credentials)),json.dumps(selected),now if expiry else None,expiry,body.enabled])
-    return {"ok":True,"id":row["id"]}
+    seeded=[]
+    if body.credentials.get("access_token"):
+        seeded=symbols_for(store,row["id"])
+        background.add_task(seed_broker,store,row["id"],DEFAULT_DAYS,params(),seeded)
+    return {"ok":True,"id":row["id"],"seeding":bool(seeded),"seed_symbols":seeded}
 @app.post("/api/brokers/{broker_id}/token")
-def update_broker_token(broker_id:int,body:BrokerTokenIn,user=Depends(current_user)):
+def update_broker_token(broker_id:int,body:BrokerTokenIn,background:BackgroundTasks,user=Depends(current_user)):
     row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
     if not row: raise HTTPException(404,"Broker not found")
     if user["role"] != "admin" and not store.one("SELECT 1 ok FROM client_brokers WHERE user_id=? AND broker_id=?",[user["id"],broker_id]):
@@ -208,7 +221,31 @@ def update_broker_token(broker_id:int,body:BrokerTokenIn,user=Depends(current_us
     expires=now+timedelta(hours=kind.token_ttl_hours) if kind.token_ttl_hours else None
     store.exec("UPDATE broker_connections SET credentials=?::jsonb,token_updated_at=?,token_expires_at=?,updated_at=now() WHERE id=?",
                [json.dumps(encrypt_credentials(credentials)),now,expires,broker_id])
-    return {"ok":True,"connected":True,"message":status.message,"expires_at":expires}
+    seeded=[]
+    if body.seed:
+        seeded=symbols_for(store,broker_id) if user["role"]=="admin" else [user["symbol"]]
+        background.add_task(seed_broker,store,broker_id,body.seed_days,params(),seeded)
+    return {"ok":True,"connected":True,"message":status.message,"expires_at":expires,
+            "seeding":bool(seeded),"seed_symbols":seeded,
+            "seed_message":(f"Backfilling {body.seed_days} days for {', '.join(seeded)} in the background."
+                            if seeded else "Token saved.")}
+
+
+@app.post("/api/admin/brokers/{broker_id}/seed")
+def seed_now(broker_id:int,body:SeedIn,background:BackgroundTasks,_=Depends(admin_user)):
+    """Run the seeder for this connection (also runs automatically after a
+    token is saved)."""
+    try: load_adapter(store,broker_id=broker_id)
+    except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
+    targets=body.symbols or symbols_for(store,broker_id)
+    background.add_task(seed_broker,store,broker_id,body.days,params(),targets)
+    return {"ok":True,"seeding":True,"seed_symbols":targets,
+            "seed_message":f"Backfilling {body.days} days for {', '.join(targets)} in the background."}
+
+
+@app.get("/api/admin/job-runs")
+def job_runs(limit:int=20,_=Depends(admin_user)):
+    return recent_runs(store,min(max(limit,1),100))
 
 @app.get("/api/brokers/fyers/generate-url")
 def fyers_generate_url(_=Depends(admin_user)):
@@ -235,10 +272,9 @@ def delete_broker(broker_id:int,_=Depends(admin_user)):
     store.exec("DELETE FROM broker_connections WHERE id=?",[broker_id]); return {"ok":True}
 @app.post("/api/admin/brokers/{broker_id}/test")
 def test_broker(broker_id:int,_=Depends(admin_user)):
-    row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
-    if not row: raise HTTPException(404,"Broker not found")
     try:
-        status=make_broker(row["broker_type"],decrypt_credentials(row["credentials"])).auth_status()
+        _,adapter=load_adapter(store,broker_id=broker_id)
+        status=adapter.auth_status()
         return {"connected":status.connected,"message":status.message}
     except Exception as exc: return {"connected":False,"message":str(exc)}
 
@@ -253,7 +289,9 @@ def backfill_broker(broker_id:int,body:BackfillIn,_=Depends(admin_user)):
     except ValueError: raise HTTPException(400,"Dates must be YYYY-MM-DD")
     resolutions=body.resolutions or row["resolutions"]
     if any(r not in INDIA_CANDLE_RESOLUTIONS for r in resolutions): raise HTTPException(400,"Unsupported resolution")
-    adapter=make_broker(row["broker_type"],decrypt_credentials(row["credentials"])); counts={}
+    try: _,adapter=load_adapter(store,broker_id=broker_id)
+    except BrokerUnavailable as exc: raise HTTPException(400,str(exc))
+    counts={}
     try:
         for resolution in resolutions:
             frame=adapter.fetch_historical(body.symbol,resolution,body.date_from,date_to)

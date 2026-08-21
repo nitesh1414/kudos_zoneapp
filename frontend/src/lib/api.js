@@ -58,6 +58,8 @@ export const endpoints = {
   brokerTypes: '/api/admin/broker-types',
   brokerTest: (id) => `/api/admin/brokers/${id}/test`,
   brokerBackfill: (id) => `/api/admin/brokers/${id}/backfill`,
+  brokerSeed: (id) => `/api/admin/brokers/${id}/seed`,
+  jobRuns: (limit = 20) => `/api/admin/job-runs?limit=${limit}`,
   brokerToken: (id) => `/api/brokers/${id}/token`,
   fyersUrl: '/api/brokers/fyers/generate-url',
   fyersExchange: '/api/brokers/fyers/exchange-token',

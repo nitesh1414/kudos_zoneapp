@@ -16,6 +16,10 @@ rates. It does **not** place orders or produce trading advice.
 - `frontend/` — React + Vite interface (login screen, tabbed client dashboard,
   tabbed admin panel). `npm run build` compiles it into `backend/app/static/`,
   which FastAPI serves
+- `backend/app/broker_store.py` — the single resolver that turns a stored,
+  encrypted broker connection into a ready adapter for every dependent service
+- `backend/app/seeding.py` — historical backfill that runs automatically after
+  a token is saved
 - `backend/app/jobs.py` — idempotent trading-day market-close worker
 - `deploy/` — systemd, nginx and 17:00 Asia/Kolkata cron examples
 
@@ -90,6 +94,22 @@ completed 15-minute candles.
 
 Broker credentials are Fernet-encrypted in PostgreSQL. Keep
 `ZONEAPP_ENCRYPTION_KEY` stable and outside source control.
+
+### Tokens and the automatic seeder
+
+A token saved in the UI is stored on the broker connection and is the single
+source of truth. `backend/app/broker_store.py` resolves it for every dependent
+service — the market-close job, the seeder, `scripts/seed.py`,
+`backend/scripts/backfill_data.py` and `verify_fyers.py` — so none of them fall
+back to "token not found" after an administrator adds one. Environment
+variables (`FYERS_ACCESS_TOKEN`) are only used when no stored connection has a
+token, which keeps standalone CLI runs working.
+
+Saving a token immediately starts a background seed: candles are fetched for
+every symbol that depends on the connection and zones plus base rates are
+rebuilt. Progress is visible under **Broker connections → Data sync activity**
+and can be re-triggered from the same page (`POST /api/admin/brokers/{id}/seed`,
+default 180 days).
 
 ### Adding another broker provider
 

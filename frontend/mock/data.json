@@ -1058,5 +1058,56 @@
    "name": "Reliance Industries",
    "segment": "NSE cash & indices"
   }
+ ],
+ "job_runs": [
+  {
+   "id": 3,
+   "job_date": "2026-08-21",
+   "broker_id": 1,
+   "broker_name": "Main Fyers account",
+   "symbol": "NSE:NIFTY50-INDEX",
+   "kind": "seed",
+   "status": "success",
+   "detail": {
+    "bars_ingested": 6120,
+    "by_resolution": {
+     "15": 5880,
+     "D": 240
+    },
+    "days": 180,
+    "sessions_scored": 118
+   },
+   "started_at": "2026-08-21T03:20:10Z",
+   "finished_at": "2026-08-21T03:22:41Z"
+  },
+  {
+   "id": 2,
+   "job_date": "2026-08-20",
+   "broker_id": 1,
+   "broker_name": "Main Fyers account",
+   "symbol": "NSE:NIFTY50-INDEX",
+   "kind": "market-close",
+   "status": "success",
+   "detail": {
+    "bars_ingested": 250,
+    "sessions_scored": 3
+   },
+   "started_at": "2026-08-20T11:30:02Z",
+   "finished_at": "2026-08-20T11:30:44Z"
+  },
+  {
+   "id": 1,
+   "job_date": "2026-08-19",
+   "broker_id": 2,
+   "broker_name": "Backup Fyers",
+   "symbol": "NSE:NIFTYBANK-INDEX",
+   "kind": "market-close",
+   "status": "failed",
+   "detail": {
+    "error": "Broker access token has expired; add today's token"
+   },
+   "started_at": "2026-08-19T11:30:02Z",
+   "finished_at": "2026-08-19T11:30:05Z"
+  }
  ]
 }

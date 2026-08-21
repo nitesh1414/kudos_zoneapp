@@ -1,18 +1,90 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CheckCircle2, CloudDownload, KeyRound, Link2, Plug, Plus, RefreshCw, Trash2, TriangleAlert,
+  CheckCircle2, CloudDownload, DatabaseZap, History, KeyRound, Link2, Loader2, Plug, Plus, RefreshCw,
+  Trash2, TriangleAlert,
 } from 'lucide-react'
 import { api, endpoints } from '../../lib/api.js'
-import { useApi, fmtDateTime } from '../../lib/hooks.js'
+import { useApi, fmtDateTime, fmtNum } from '../../lib/hooks.js'
 import {
   Badge, Button, Card, Empty, ErrorState, Field, IconButton, Input, Modal, Skeleton, TableWrap, Td, Th,
 } from '../../components/ui.jsx'
+
+const runTone = { success: 'up', running: 'brand', failed: 'down' }
+
+/** Seeding and market-close runs, so an admin can see what a saved token did. */
+function SyncActivity({ runs }) {
+  const rows = runs.data || []
+  const busy = rows.some((r) => r.status === 'running')
+
+  useEffect(() => {
+    if (!busy) return
+    const id = setInterval(runs.reload, 5000)
+    return () => clearInterval(id)
+  }, [busy, runs.reload])
+
+  const summary = (r) => {
+    const d = r.detail || {}
+    if (d.error) return d.error
+    const parts = []
+    if (d.bars_ingested !== undefined) parts.push(`${fmtNum(d.bars_ingested)} bars`)
+    if (d.sessions_scored !== undefined) parts.push(`${fmtNum(d.sessions_scored)} sessions scored`)
+    if (d.days) parts.push(`${d.days} days`)
+    return parts.join(' · ') || '—'
+  }
+
+  return (
+    <Card
+      title="Data sync activity"
+      icon={History}
+      subtitle="Seeding starts automatically whenever a token is saved."
+      right={
+        <Button variant="ghost" size="sm" icon={busy ? Loader2 : RefreshCw} onClick={runs.reload}>
+          <span className="hidden sm:inline">{busy ? 'Running…' : 'Refresh'}</span>
+        </Button>
+      }
+    >
+      {runs.loading && <Skeleton className="h-24" />}
+      {!runs.loading && rows.length === 0 && (
+        <Empty icon={History} title="No runs yet" hint="Save a broker token or start a seed to see progress here." />
+      )}
+      {rows.length > 0 && (
+        <TableWrap>
+          <thead>
+            <tr>
+              <Th>Started</Th>
+              <Th>Type</Th>
+              <Th>Connection</Th>
+              <Th>Symbol</Th>
+              <Th>Status</Th>
+              <Th>Result</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.id}-${r.kind}`} className="transition hover:bg-white/3">
+                <Td className="num text-xs whitespace-nowrap text-slate-400">{fmtDateTime(r.started_at)}</Td>
+                <Td className="text-xs">{r.kind === 'seed' ? 'Seed' : 'Market close'}</Td>
+                <Td className="text-xs">{r.broker_name || `#${r.broker_id}`}</Td>
+                <Td className="num text-xs">{r.symbol}</Td>
+                <Td>
+                  <Badge tone={runTone[r.status] || 'neutral'}>{r.status}</Badge>
+                </Td>
+                <Td className="text-xs text-slate-400">{summary(r)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </TableWrap>
+      )}
+    </Card>
+  )
+}
 
 const tokenTone = { valid: 'up', expiring: 'warn', expired: 'down', unknown: 'neutral' }
 
 export default function Brokers() {
   const brokers = useApi(endpoints.brokers)
   const types = useApi(endpoints.brokerTypes)
+  const runs = useApi(() => endpoints.jobRuns(15), [])
   const [addOpen, setAddOpen] = useState(false)
   const [typeKey, setTypeKey] = useState('')
   const [creds, setCreds] = useState({})
@@ -25,6 +97,7 @@ export default function Brokers() {
   const [backfill, setBackfill] = useState({ symbol: 'NSE:NIFTY50-INDEX', date_from: '2015-01-01', date_to: '' })
   const [confirm, setConfirm] = useState(null)
   const [result, setResult] = useState(null)
+  const [seedDays, setSeedDays] = useState(180)
   const [authUrl, setAuthUrl] = useState('')
   const [authCode, setAuthCode] = useState('')
 
@@ -82,11 +155,16 @@ export default function Brokers() {
     setBusy(true)
     setResult(null)
     try {
-      const res = await api.post(endpoints.brokerToken(tokenFor.id), { access_token: tokenValue.trim() })
-      setResult({ ok: true, text: res.message || 'Token saved.' })
+      const res = await api.post(endpoints.brokerToken(tokenFor.id), {
+        access_token: tokenValue.trim(),
+        seed: true,
+        seed_days: seedDays,
+      })
+      setResult({ ok: true, text: `${res.message || 'Token saved.'} ${res.seed_message || ''}`.trim() })
       setTokenFor(null)
       setTokenValue('')
       brokers.reload()
+      setTimeout(runs.reload, 800)
     } catch (err) {
       setResult({ ok: false, text: err.message })
     } finally {
@@ -107,6 +185,17 @@ export default function Brokers() {
       setResult({ ok: false, text: err.message })
     } finally {
       setBusy(false)
+    }
+  }
+
+  const seed = async (b) => {
+    setResult({ ok: true, text: `Starting a ${seedDays}-day seed for ${b.name}…` })
+    try {
+      const res = await api.post(endpoints.brokerSeed(b.id), { days: seedDays })
+      setResult({ ok: true, text: res.seed_message })
+      setTimeout(runs.reload, 800)
+    } catch (err) {
+      setResult({ ok: false, text: err.message })
     }
   }
 
@@ -195,6 +284,7 @@ export default function Brokers() {
                   <Td>
                     <div className="flex flex-wrap justify-end gap-1.5">
                       <IconButton icon={KeyRound} label="Update daily token" onClick={() => { setTokenFor(b); setTokenValue('') }} />
+                      <IconButton icon={DatabaseZap} label="Seed history now" onClick={() => seed(b)} />
                       <IconButton icon={CloudDownload} label="Backfill candles" onClick={() => setBackfillFor(b)} />
                       <IconButton icon={RefreshCw} label="Test connection" onClick={() => test(b)} />
                       <IconButton icon={Trash2} tone="danger" label="Delete connection" onClick={() => setConfirm(b)} />
@@ -206,6 +296,8 @@ export default function Brokers() {
           </TableWrap>
         )}
       </Card>
+
+      <SyncActivity runs={runs} />
 
       {/* Add broker */}
       <Modal
@@ -305,9 +397,24 @@ export default function Brokers() {
           </>
         }
       >
-        <Field label="Access token" hint="Verified against the provider before it is stored.">
-          <Input value={tokenValue} onChange={(e) => setTokenValue(e.target.value)} placeholder="Paste today's token" />
-        </Field>
+        <div className="space-y-3.5">
+          <Field label="Access token" hint="Verified against the provider before it is stored.">
+            <Input value={tokenValue} onChange={(e) => setTokenValue(e.target.value)} placeholder="Paste today's token" />
+          </Field>
+          <Field label="Seed history after saving" hint="Candles are backfilled and zones rebuilt in the background so dependent services have data straight away.">
+            <select
+              className="w-full rounded-xl border border-white/10 bg-ink-900/80 px-3 py-2.5 text-sm text-slate-100"
+              value={seedDays}
+              onChange={(e) => setSeedDays(Number(e.target.value))}
+            >
+              {[30, 90, 180, 365, 730].map((d) => (
+                <option key={d} value={d}>
+                  Last {d} days
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
       </Modal>
 
       {/* Backfill */}

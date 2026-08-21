@@ -3,8 +3,7 @@ import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .auth import decrypt_credentials
-from .brokers.registry import make_broker
+from .broker_store import load_adapter
 from .service import ZoneParams, run_eod
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -33,17 +32,19 @@ def run_market_close(store, params: ZoneParams | None = None, now=None, force=Fa
         WHERE b.enabled=true AND u.active=true""")
     runs = []
     for row in assignments.to_dict("records"):
-        existing = store.one("SELECT status FROM job_runs WHERE job_date=? AND broker_id=? AND symbol=?", [day,row["broker_id"],row["symbol"]])
+        existing = store.one("SELECT status FROM job_runs WHERE job_date=? AND broker_id=? AND symbol=? AND kind='market-close'", [day,row["broker_id"],row["symbol"]])
         if existing and existing["status"] == "success" and not force:
             runs.append({"broker_id": row["broker_id"], "symbol": row["symbol"], "status": "already-complete"})
             continue
-        store.exec("""INSERT INTO job_runs(job_date,broker_id,symbol,status) VALUES (?,?,?,'running')
-            ON CONFLICT(job_date,broker_id,symbol) DO UPDATE SET status='running',started_at=now(),finished_at=NULL""", [day,row["broker_id"],row["symbol"]])
+        store.exec("""INSERT INTO job_runs(job_date,broker_id,symbol,kind,status) VALUES (?,?,?,'market-close','running')
+            ON CONFLICT(job_date,broker_id,symbol,kind) DO UPDATE SET status='running',started_at=now(),finished_at=NULL""", [day,row["broker_id"],row["symbol"]])
         try:
             expiry=row.get("token_expires_at")
             if expiry and expiry <= now.astimezone(expiry.tzinfo):
                 raise RuntimeError("Broker access token has expired; add today's token")
-            adapter = make_broker(row["broker_type"], decrypt_credentials(row["credentials"]))
+            # Resolve through broker_store so stored credentials are the single
+            # source of truth for every dependent service.
+            _, adapter = load_adapter(store, broker_id=row["broker_id"])
             start = (day - timedelta(days=10)).isoformat()
             resolutions=row.get("resolutions") or ["15","D"]
             ingested, warnings={}, {}
@@ -60,6 +61,6 @@ def run_market_close(store, params: ZoneParams | None = None, now=None, force=Fa
             status = "success" if result.get("ok") else "failed"
         except Exception as exc:
             status, detail = "failed", {"error": str(exc)}
-        store.exec("UPDATE job_runs SET status=?,detail=?::jsonb,finished_at=now() WHERE job_date=? AND broker_id=? AND symbol=?", [status,json.dumps(detail),day,row["broker_id"],row["symbol"]])
+        store.exec("UPDATE job_runs SET status=?,detail=?::jsonb,finished_at=now() WHERE job_date=? AND broker_id=? AND symbol=? AND kind='market-close'", [status,json.dumps(detail),day,row["broker_id"],row["symbol"]])
         runs.append({"broker_id": row["broker_id"], "symbol": row["symbol"], "status": status, **detail})
     return {"ok": all(r["status"] in ("success","already-complete") for r in runs), "date": str(day), "runs": runs}

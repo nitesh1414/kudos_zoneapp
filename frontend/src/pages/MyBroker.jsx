@@ -17,8 +17,8 @@ export default function MyBroker() {
     setBusy(true)
     setMsg(null)
     try {
-      const res = await api.post(endpoints.brokerToken(data.id), { access_token: token.trim() })
-      setMsg({ ok: true, text: res.message || 'Token saved.' })
+      const res = await api.post(endpoints.brokerToken(data.id), { access_token: token.trim(), seed: true })
+      setMsg({ ok: true, text: `${res.message || 'Token saved.'} ${res.seed_message || ''}`.trim() })
       setToken('')
       reload()
     } catch (err) {
@@ -73,7 +73,11 @@ export default function MyBroker() {
         </dl>
       </Card>
 
-      <Card title="Daily access token" icon={KeyRound} subtitle="Broker tokens expire every day. Paste today's token to keep market data flowing.">
+      <Card
+        title="Daily access token"
+        icon={KeyRound}
+        subtitle="Broker tokens expire every day. Saving one immediately refreshes your candles, zones and base rates in the background."
+      >
         <form onSubmit={save} className="space-y-3">
           <Field label="Access token" hint="Stored encrypted at rest; never shown again after saving.">
             <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Paste today's access token" required minLength={10} />

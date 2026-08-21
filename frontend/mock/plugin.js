@@ -84,6 +84,7 @@ export default function mockApi() {
         if (path === '/api/admin/broker-types') return json(res, db.broker_types)
         if (path === '/api/admin/brokers') return json(res, db.brokers)
         if (path === '/api/admin/holidays') return json(res, db.holidays)
+        if (path === '/api/admin/job-runs') return json(res, db.job_runs)
         if (path === '/api/admin/gift-nifty') return json(res, db.dashboard.gift_nifty)
 
         if (path === '/api/admin/clients') {
@@ -118,6 +119,23 @@ export default function mockApi() {
           }
         }
         if (path.endsWith('/test')) return json(res, { connected: true, message: 'Mock broker reachable' })
+        const tokenMatch = path.match(/^\/api\/brokers\/(\d+)\/token$/)
+        const seedMatch = path.match(/^\/api\/admin\/brokers\/(\d+)\/seed$/)
+        if (tokenMatch || seedMatch) {
+          const symbols = ['NSE:NIFTY50-INDEX']
+          const days = body.seed_days || body.days || 180
+          db.job_runs.unshift({
+            id: Date.now(), job_date: new Date().toISOString().slice(0, 10), broker_id: 1,
+            broker_name: 'Main Fyers account', symbol: symbols[0], kind: 'seed', status: 'success',
+            detail: { bars_ingested: 6120, by_resolution: { 15: 5880, D: 240 }, days, sessions_scored: 118 },
+            started_at: new Date().toISOString(), finished_at: new Date().toISOString(),
+          })
+          return json(res, {
+            ok: true, connected: true, message: 'Token verified with the provider.',
+            seeding: true, seed_symbols: symbols,
+            seed_message: `Backfilling ${days} days for ${symbols.join(', ')} in the background.`,
+          })
+        }
         if (path.includes('/jobs/market-close')) return json(res, { ok: true, status: 'completed', message: 'Mock run finished', sessions_scored: 3 })
         return json(res, { ok: true, mock: true })
       })

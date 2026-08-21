@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 backend_root = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=backend_root / ".env")
 
+from app.broker_store import BrokerUnavailable, load_adapter
 from app.brokers.fyers_adapter import FyersAdapter
 from app.db import Store
 from app.service import ZoneParams, run_eod
@@ -93,11 +94,20 @@ def run_backfill():
     print(f"Database   : {DATABASE_URL}")
     print("=" * 65)
 
-    # 1. Initialize Adapter and Store
-    adapter = FyersAdapter()
+    # 1. Initialize Adapter and Store. Stored (admin-managed) credentials win;
+    #    environment variables are only a fallback for standalone use.
+    store = Store(DATABASE_URL)
+    try:
+        row, adapter = load_adapter(store, symbol=args.symbol)
+        print(f"[OK] Using stored broker connection '{row['name']}' (id {row['id']}).")
+    except BrokerUnavailable as exc:
+        print(f"[..] {exc}")
+        adapter = FyersAdapter()
     auth = adapter.auth_status()
     if not auth.connected:
         print(f"[ERROR] Broker not connected: {auth.message}", file=sys.stderr)
+        print("        Add today's token in the administrator panel, or set "
+              "FYERS_ACCESS_TOKEN for standalone runs.", file=sys.stderr)
         sys.exit(1)
 
     print(f"[OK] Broker Status: {auth.message}")
@@ -120,7 +130,6 @@ def run_backfill():
 
     # 2. Ingest into PostgreSQL/TimescaleDB
     print("\n[2/3] Writing to PostgreSQL/TimescaleDB...")
-    store = Store(DATABASE_URL)
     n_upserted = store.upsert_bars(df, args.symbol, "fyers", args.resolution)
     print(f"[OK] Upserted {n_upserted:,} bars into database.")
 

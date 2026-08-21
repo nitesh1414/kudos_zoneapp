@@ -29,9 +29,23 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / "backend" / ".env")
 
 from app.db import Store
+from app.broker_store import BrokerUnavailable, load_adapter
 from app.brokers.csv_adapter import CSVAdapter
 from app.brokers.fyers_adapter import FyersAdapter
 from app.service import run_eod, ZoneParams
+
+
+def resolve_adapter(store, symbol: str):
+    """Prefer the token an administrator saved in the application; fall back to
+    environment variables only when no stored connection has one."""
+    try:
+        row, adapter = load_adapter(store, symbol=symbol)
+        print(f"[OK] Using stored broker connection '{row['name']}' (id {row['id']}).")
+        return adapter
+    except BrokerUnavailable as exc:
+        print(f"[..] {exc}")
+        print("[..] Falling back to FYERS_ACCESS_TOKEN from the environment.")
+        return FyersAdapter()
 
 
 def seed_from_fyers(store, symbol: str, days_back: int = 90):
@@ -43,15 +57,14 @@ def seed_from_fyers(store, symbol: str, days_back: int = 90):
 
     print(f"Fetching {symbol} data from {date_from} to {date_to} via Fyers API...")
 
-    # Initialize Fyers adapter
-    adapter = FyersAdapter()
+    adapter = resolve_adapter(store, symbol)
     status = adapter.auth_status()
 
     if not status.connected:
         print(f"[ERROR] Fyers not connected: {status.message}")
-        print("\nTo generate a token, run:")
-        print("  cd backend && python -m app.brokers.generate_token")
-        print("Then set FYERS_ACCESS_TOKEN in your .env file.\n")
+        print("\nAdd today's token in the administrator panel")
+        print("(Broker connections -> Daily token); seeding then starts on its own.")
+        print("Alternatively run: cd backend && python -m app.brokers.generate_token\n")
         sys.exit(1)
 
     print(f"[OK] Fyers connected: {status.message}")
@@ -89,7 +102,7 @@ def seed_from_fyers(store, symbol: str, days_back: int = 90):
     print(f"\nSeed complete:")
     print(f"  Bars:     {int(c['bars']):,}")
     print(f"  Sessions: {int(c['sessions']):,}")
-    print(f"  Zones:    {int(c['zone_obs']):,}")
+    print(f"  Zones:    {int(c['zone_observations']):,}")
 
     return result
 
