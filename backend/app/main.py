@@ -340,10 +340,11 @@ def _save_token(row,credentials,token:str,broker_id:int):
         if info.get("problem"):
             detail+=" "+info["problem"]
         elif info.get("readable"):
-            detail+=(f" The token itself reads as app id '{info['app_id'] or 'unknown'}', user "
-                     f"'{info['user'] or 'unknown'}', which matches this connection — so the provider refused it "
-                     f"for another reason: it may have been replaced by a newer token for the same app, or the "
-                     f"app may be inactive. Press Generate token to create a fresh one.")
+            who=f"user '{info['user']}'" if info.get("user") else "an unnamed user"
+            detail+=(f" The token parses correctly ({info['kind']} for {who}), so the provider refused it for "
+                     f"another reason: a newer token may have been generated for app id "
+                     f"'{credentials.get('client_id')}' since, or the app may be inactive. "
+                     f"Press Generate token on this connection to create a fresh one.")
         else:
             detail+=(" The value could not be read as a Fyers token. Press Generate token on this connection, or "
                      "paste the access token or the full redirect URL exactly as the provider shows it.")

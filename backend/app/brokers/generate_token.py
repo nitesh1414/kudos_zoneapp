@@ -109,25 +109,35 @@ def looks_like_auth_code(token: str) -> bool:
 
 
 def describe_token(token: str, client_id: str | None = None) -> dict:
-    """What the token says about itself, and whether it can possibly work."""
+    """What the token says about itself, and whether it can possibly work.
+
+    Only claims that really identify the app are used. A Fyers access token
+    carries ``aud`` as a list of scopes (``d:1``, ``x:0``…), never the app id,
+    so it must not be read as one — doing so rejected valid tokens.
+    """
     claims = decode_claims(token)
-    app_id = str(claims.get("appId") or claims.get("aud") or "").strip()
+    raw_app_id = claims.get("appId") or claims.get("app_id") or claims.get("client_id")
+    app_id = str(raw_app_id).strip() if isinstance(raw_app_id, (str, int)) else ""
     expires = claims.get("exp")
     info = {
         "kind": str(claims.get("sub") or ("unknown" if not claims else "token")),
         "app_id": app_id,
+        "app_type": str(claims.get("appType") or "").strip(),
         "user": claims.get("fy_id") or claims.get("display_name"),
         "expires_at": expires,
         "expired": bool(expires and float(expires) < time.time()),
         "readable": bool(claims),
     }
+
+    # Deliberately conservative: only refuse locally when the token cannot
+    # possibly work. Anything else is left for the provider to judge.
     problem = None
     if looks_like_auth_code(token):
         problem = ("This is an auth code, not an access token. Paste the redirect URL or the auth code on its own "
                    "and it will be exchanged for you.")
     elif info["expired"]:
         problem = "This token has already expired. Generate today's token."
-    elif app_id and client_id and app_id.split("-")[0] != str(client_id).split("-")[0]:
+    elif app_id and client_id and app_id.split("-")[0].upper() != str(client_id).split("-")[0].upper():
         problem = (f"This token was issued for app id '{app_id}', but the connection uses '{client_id}'. "
                    f"Generate the token from this connection, or correct its App / Client ID.")
     info["problem"] = problem

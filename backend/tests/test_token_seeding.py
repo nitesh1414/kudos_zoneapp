@@ -307,5 +307,40 @@ class FyersTokenDiagnosticsTests(unittest.TestCase):
         self.assertFalse(describe_token("not-a-jwt", "APP-100")["readable"])
 
 
+
+
+
+class RealFyersPayloadTests(unittest.TestCase):
+    """A genuine Fyers access token must never be refused locally."""
+
+    @staticmethod
+    def _jwt(payload):
+        import base64, json as _json
+        body = base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode().rstrip("=")
+        return "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9." + body + ".signature"
+
+    def test_scope_list_in_aud_is_not_an_app_id(self):
+        from app.brokers.generate_token import describe_token
+
+        # This is the shape Fyers v3 actually returns: aud is a scope list and
+        # there is no appId claim at all.
+        token = self._jwt({
+            "aud": ["d:1", "d:2", "x:0", "x:1"], "iss": "api.fyers.in", "sub": "access_token",
+            "exp": 99999999999, "iat": 1700000000, "nbf": 1700000000,
+            "fy_id": "XY1234", "display_name": "", "appType": "100", "poa_flag": "N",
+        })
+        info = describe_token(token, "937RN4D2JZ-100")
+        self.assertIsNone(info["problem"], info)
+        self.assertEqual("", info["app_id"])
+        self.assertEqual("100", info["app_type"])
+        self.assertEqual("XY1234", info["user"])
+
+    def test_mismatch_still_caught_when_the_claim_exists(self):
+        from app.brokers.generate_token import describe_token
+
+        token = self._jwt({"sub": "access_token", "appId": "SOMEOTHER", "exp": 99999999999})
+        self.assertIn("SOMEOTHER", describe_token(token, "937RN4D2JZ-100")["problem"])
+
+
 if __name__ == "__main__":
     unittest.main()
