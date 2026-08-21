@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -17,7 +17,6 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from .auth import (COOKIE_NAME, create_session, decrypt_credentials, delete_session,
                    encrypt_credentials, hash_password, session_user, verify_password)
 from .brokers.base import BrokerError
-from .brokers.csv_adapter import CSVAdapter
 from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker_type, make_broker
 from .db import Store
 from .instruments import SOURCES, search_instruments
@@ -25,12 +24,12 @@ from .jobs import run_market_close
 from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_recap, stats_days, stats_zones)
 
 API_KEY = os.getenv("ZONEAPP_API_KEY", "")
-UPLOAD_DIR = os.getenv("ZONEAPP_UPLOADS", "./data/uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 store = Store()
 
-app = FastAPI(title="ZoneApp", version="2.0.0", description="Multi-client next-session market zones")
-TEMPLATES = Path(__file__).parent / "templates"
+app = FastAPI(title="ZoneApp", version="3.0.0", description="Multi-client next-session market zones")
+# Compiled React single-page app (frontend/ -> npm run build).
+STATIC = Path(__file__).parent / "static"
+SPA_INDEX = STATIC / "index.html"
 
 
 def bootstrap_admin():
@@ -106,27 +105,12 @@ class DashboardQuery(BaseModel):
     date: str | None = None
 
 
-# ------------------------------ DASHBOARD ------------------------------
-@app.get("/", response_class=HTMLResponse)
-def dashboard(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    """Serve the NIFTY 50 Trading Levels & Analytics dashboard.
-
-    The same single-page dashboard is the entry point for admin, client and
-    even anonymous visitors. The page reads /api/dashboard which falls back
-    to the default symbol when no session cookie is present.
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "templates", "index.html")) as f:
-        return f.read()
-@app.get("/login")
-def login_page(): return FileResponse(TEMPLATES/"login.html")
-@app.get("/admin")
-def admin_page(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    user=session_user(store,token)
-    return FileResponse(TEMPLATES/"admin.html") if user and user["role"]=="admin" else RedirectResponse("/login")
-@app.get("/app")
-def client_page(token: str|None=Cookie(None,alias=COOKIE_NAME)):
-    return FileResponse(TEMPLATES/"client.html") if session_user(store,token) else RedirectResponse("/login")
+# ------------------------------ ENTRY POINT ------------------------------
+@app.get("/")
+def root(token: str|None=Cookie(None,alias=COOKIE_NAME)):
+    """There is no public landing page: visitors always start at the login
+    screen and land on the dashboard once a session exists."""
+    return RedirectResponse("/dashboard/overview" if session_user(store,token) else "/login")
 
 
 @app.post("/api/auth/login")
@@ -171,6 +155,14 @@ def update_client(user_id:int,body:ClientPatch,_=Depends(admin_user)):
     if "broker_id" in body.model_fields_set:
         if body.broker_id: store.exec("INSERT INTO client_brokers(user_id,broker_id) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET broker_id=excluded.broker_id",[user_id,body.broker_id])
         else: store.exec("DELETE FROM client_brokers WHERE user_id=?",[user_id])
+    return {"ok":True}
+
+@app.delete("/api/admin/clients/{user_id}")
+def delete_client(user_id:int,_=Depends(admin_user)):
+    """Remove a client login. Sessions and the broker assignment cascade."""
+    row=store.one("SELECT id FROM users WHERE id=? AND role='client'",[user_id])
+    if not row: raise HTTPException(404,"Client not found")
+    store.exec("DELETE FROM users WHERE id=? AND role='client'",[user_id])
     return {"ok":True}
 
 @app.get("/api/admin/broker-types")
@@ -271,20 +263,15 @@ def backfill_broker(broker_id:int,body:BackfillIn,_=Depends(admin_user)):
     return {"ok":True,"symbol":body.symbol,"by_resolution":counts,**result}
 
 
-@app.get("/api/dashboard/public")
-def dashboard_public(date:str|None=None):
-    """Same payload as /api/dashboard, but uses the default symbol from
-    ZONEAPP_SYMBOL and works for unauthenticated visitors."""
-    symbol = os.getenv("ZONEAPP_SYMBOL", "NSE:NIFTY50-INDEX")
-    payload = dashboard_payload(store, symbol, params())
-    payload["authenticated"] = False
-    payload["can_edit"] = False
-    if date:
-        r = session_recap(store, symbol, date, params())
-        m = match_check(store, symbol, date, params())
-        if r: payload["session_recap"] = r
-        if m: payload["match_check"] = m
+def _strip_stars(payload: dict):
+    """Star ratings are an administrator-only detail; clients see the base
+    rates (touch/hold) instead, which is what the numbers actually mean."""
+    for row in payload.get("zones", {}).get("rows", []) or []:
+        row.pop("stars", None); row.pop("weight", None)
+    for row in (payload.get("session_recap") or {}).get("zones", []) or []:
+        row.pop("stars", None); row.pop("weight", None)
     return payload
+
 
 @app.get("/api/dashboard")
 def dashboard(date:str|None=None,user=Depends(current_user)):
@@ -299,7 +286,7 @@ def dashboard(date:str|None=None,user=Depends(current_user)):
         m = match_check(store, user["symbol"], date, params())
         if r: payload["session_recap"] = r
         if m: payload["match_check"] = m
-    return payload
+    return payload if user["role"] == "admin" else _strip_stars(payload)
 
 # Client result APIs; symbol always comes from the authenticated account.
 @app.get("/api/my/broker")
@@ -326,7 +313,11 @@ def candles(resolution:str="15",limit:int=500,user=Depends(current_user)):
 @app.get("/api/health")
 def health(user=Depends(current_user)):
     symbol=user["symbol"]; c=store.counts(symbol)
-    return {"ok":True,"symbol":symbol,**c,"server_time":datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")}
+    broker=store.one("""SELECT b.name FROM client_brokers cb JOIN broker_connections b ON b.id=cb.broker_id
+        WHERE cb.user_id=?""",[user["id"]]) if user["role"]!="admin" else store.one(
+        "SELECT name FROM broker_connections WHERE enabled=true ORDER BY id LIMIT 1")
+    return {"ok":True,"symbol":symbol,**c,"broker":(broker or {}).get("name") or "Not connected",
+            "server_time":datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")}
 @app.get("/api/levels/next")
 def levels_next(user=Depends(current_user)):
     sheet=next_session_sheet(store,user["symbol"],params())
@@ -337,7 +328,10 @@ def levels_next(user=Depends(current_user)):
     result["disclaimer"]="Reference map from the last completed session; not a trade signal or forecast."
     return result
 @app.get("/api/stats/zones")
-def zone_stats(user=Depends(current_user)): return stats_zones(store,user["symbol"])
+def zone_stats(user=Depends(current_user)):
+    stats=stats_zones(store,user["symbol"])
+    if user["role"]!="admin": stats.pop("by_stars",None)  # star rating is admin-only
+    return stats
 @app.get("/api/stats/days")
 def day_stats(user=Depends(current_user)): return stats_days(store,user["symbol"])
 @app.get("/api/sessions")
@@ -359,12 +353,6 @@ def put_gift_nifty(body: GiftNiftyIn, _=Depends(admin_user)):
     store.kv_set("dashboard_gift_nifty", payload)
     return {"ok": True, "payload": payload}
 
-@app.post("/api/admin/ingest/csv")
-async def ingest_csv(symbol:str,file:UploadFile=File(...),_=Depends(admin_user)):
-    safe=Path(file.filename or "upload.csv").name; path=Path(UPLOAD_DIR)/safe; path.write_bytes(await file.read())
-    try: df=CSVAdapter(str(path)).fetch_historical(symbol,"15","1900-01-01","2100-01-01")
-    except BrokerError as exc: raise HTTPException(400,str(exc))
-    n=store.upsert_bars(df,symbol,"csv"); return {"bars_ingested":n,**run_eod(store,symbol,params(),True)}
 @app.get("/api/admin/holidays")
 def holidays(_=Depends(admin_user)):
     return store.q("SELECT holiday_date,label FROM market_holidays ORDER BY holiday_date DESC").to_dict("records")
@@ -382,3 +370,22 @@ def market_job(force:bool=False,_=Depends(admin_user)): return run_market_close(
 @app.post("/api/jobs/market-close")
 def cron_market_job(force:bool=False,x_api_key:Optional[str]=Header(None)):
     require_job_key(x_api_key); return run_market_close(store,params(),force=force)
+
+
+# ------------------------------ SINGLE-PAGE APP ------------------------------
+# Everything that is not an /api route is handed to the React build, which
+# renders the login screen first and the tabbed dashboard once signed in.
+if (STATIC / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa(full_path: str):
+    if full_path.startswith("api/"):
+        raise HTTPException(404, "Not found")
+    asset = (STATIC / full_path)
+    if full_path and asset.is_file():
+        return FileResponse(asset)
+    if not SPA_INDEX.is_file():
+        raise HTTPException(503, "Frontend build is missing. Run: cd frontend && npm install && npm run build")
+    return FileResponse(SPA_INDEX)
