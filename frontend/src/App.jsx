@@ -12,6 +12,7 @@ import Clients from './pages/admin/Clients.jsx'
 import Symbols from './pages/admin/Symbols.jsx'
 import Seeding from './pages/admin/Seeding.jsx'
 import Methodology from './pages/admin/Methodology.jsx'
+import Instruments from './pages/admin/Instruments.jsx'
 import Brokers from './pages/admin/Brokers.jsx'
 import Holidays from './pages/admin/Holidays.jsx'
 import Jobs from './pages/admin/Jobs.jsx'
@@ -79,6 +80,14 @@ export default function App() {
           element={
             <Protected adminOnly>
               <Brokers />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/instruments"
+          element={
+            <Protected adminOnly>
+              <Instruments />
             </Protected>
           }
         />

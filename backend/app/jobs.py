@@ -8,7 +8,9 @@ import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .broker_store import load_adapter
+from . import instruments as instrument_master
+from . import market_calendar
+from .broker_store import BrokerUnavailable, load_adapter
 from .service import ZoneParams, run_eod
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -84,5 +86,29 @@ def run_market_close(store, params: ZoneParams | None = None, now=None, force=Fa
         store.exec("UPDATE job_runs SET status=?,detail=?::jsonb,finished_at=now() WHERE job_date=? AND broker_id=? AND symbol=? AND kind='market-close'",
                    [status, json.dumps(detail), day, row["broker_id"], row["symbol"]])
         runs.append({"broker_id": row["broker_id"], "symbol": row["symbol"], "status": status, **detail})
+    housekeeping = refresh_reference_data(store)
     return {"ok": all(r["status"] in ("success", "already-complete") for r in runs),
-            "date": str(day), "symbols": len(runs), "runs": runs}
+            "date": str(day), "symbols": len(runs), "runs": runs, "reference_data": housekeeping}
+
+
+def refresh_reference_data(store):
+    """Keep the contract master and the holiday calendar current. Runs after
+    the market-close job; failures are reported, never fatal."""
+    result = {}
+    try:
+        if instrument_master.is_stale(store):
+            result["instruments"] = instrument_master.refresh(store)
+        else:
+            result["instruments"] = {"skipped": "already fresh"}
+    except Exception as exc:
+        result["instruments"] = {"error": str(exc)[:200]}
+    try:
+        adapter = None
+        try:
+            _row, adapter = load_adapter(store)
+        except BrokerUnavailable:
+            pass
+        result["holidays"] = market_calendar.sync(store, adapter)
+    except Exception as exc:
+        result["holidays"] = {"error": str(exc)[:200]}
+    return result

@@ -786,5 +786,218 @@ class MethodologyTests(unittest.TestCase):
             self.client.delete(f"/api/admin/clients/{created.json()['id']}")
 
 
+
+
+
+@unittest.skipUnless(DSN, "DATABASE_URL is not set")
+class InstrumentMasterTests(unittest.TestCase):
+    """Contracts, lot sizes, strikes and expiries are stored in PostgreSQL and
+    served from there — no provider round-trip per keystroke."""
+
+    # Header-less rows in the provider's layout: fytoken, description, exchange
+    # instrument type, lot size, tick size, isin, session, updated, expiry
+    # (epoch), ticker, exchange, segment, scrip code, underlying, ufytoken,
+    # strike, option type.
+    MASTER = "\n".join([
+        "101000000026000,NIFTY 50 INDEX,0,1,0.05,,0930-1530,2026-08-20,-1,NSE:NIFTY50-INDEX,10,10,26000,NIFTY,0,-1,XX",
+        "101110026082700,NIFTY 28 AUG 26 FUT,11,75,0.05,,0915-1530,2026-08-20,1787923800,NSE:NIFTY26AUGFUT,10,11,35001,NIFTY,26000,-1,XX",
+        "101125082724800,NIFTY 28 AUG 26 24800 CE,14,75,0.05,,0915-1530,2026-08-20,1787923800,NSE:NIFTY26AUG24800CE,10,11,35002,NIFTY,26000,24800,CE",
+        "101125082724800,NIFTY 28 AUG 26 24800 PE,14,75,0.05,,0915-1530,2026-08-20,1787923800,NSE:NIFTY26AUG24800PE,10,11,35003,NIFTY,26000,24800,PE",
+        "101125092524900,NIFTY 25 SEP 26 24900 CE,14,75,0.05,,0915-1530,2026-08-20,1790343000,NSE:NIFTY26SEP24900CE,10,11,35004,NIFTY,26000,24900,CE",
+        "101110026090100,BANKNIFTY 24 SEP 26 FUT,11,35,0.05,,0915-1530,2026-08-20,1790343000,NSE:BANKNIFTY26SEPFUT,10,11,35005,BANKNIFTY,26001,-1,XX",
+        "101000001594,RELIANCE INDUSTRIES LTD,0,1,0.05,INE002A01018,0915-1530,2026-08-20,-1,NSE:RELIANCE-EQ,10,10,2885,RELIANCE,0,-1,XX",
+        "bad,row,without,enough,columns",
+    ])
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        import app.main as main
+
+        cls.main = main
+        cls.store = main.store
+        cls.client = TestClient(main.app)
+        cls.client.__enter__()
+        cls.client.post("/api/auth/login", json={"username": "admin",
+                                                 "password": os.environ["ZONEAPP_ADMIN_PASSWORD"]})
+        from app import instruments
+        cls.summary = instruments.refresh(cls.store, fetch=lambda url: cls.MASTER,
+                                          sources={"NSE futures & options": "test://master.csv"})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.store.exec("DELETE FROM instruments WHERE source LIKE ?", ["test://%"])
+        cls.client.__exit__(None, None, None)
+
+    def test_master_is_parsed_and_stored(self):
+        self.assertEqual(7, self.summary["total"], self.summary)   # the malformed row is skipped
+        self.assertEqual({}, self.summary["errors"])
+
+    def test_contract_details_are_complete(self):
+        option = self.client.get("/api/instruments/NSE:NIFTY26AUG24800CE/contract").json()
+        self.assertEqual("CE", option["instrument_type"])
+        self.assertEqual("CE", option["option_type"])
+        self.assertEqual(75, option["lot_size"])
+        self.assertEqual(24800.0, option["strike"])
+        self.assertEqual("NIFTY", option["underlying"])
+        self.assertEqual("2026-08-28", str(option["expiry_date"]))
+        self.assertEqual(0.05, option["tick_size"])
+
+        future = self.client.get("/api/instruments/NSE:BANKNIFTY26SEPFUT/contract").json()
+        self.assertEqual("FUT", future["instrument_type"])
+        self.assertEqual(35, future["lot_size"])
+        self.assertIsNone(future["strike"])
+
+        cash = self.client.get("/api/instruments/NSE:RELIANCE-EQ/contract").json()
+        self.assertEqual("EQ", cash["instrument_type"])
+        self.assertEqual("INE002A01018", cash["isin"])
+        self.assertIsNone(cash["expiry_date"])
+
+        index = self.client.get("/api/instruments/NSE:NIFTY50-INDEX/contract").json()
+        self.assertEqual("INDEX", index["instrument_type"])
+
+    def test_search_filters(self):
+        items = self.client.get("/api/instruments?q=nifty 24800&type=CE").json()["items"]
+        self.assertEqual(["NSE:NIFTY26AUG24800CE"], [i["symbol"] for i in items])
+        puts = self.client.get("/api/instruments?underlying=NIFTY&type=PE").json()["items"]
+        self.assertTrue(puts and all(i["option_type"] == "PE" for i in puts))
+        by_expiry = self.client.get("/api/instruments?underlying=NIFTY&expiry=2026-09-25").json()["items"]
+        self.assertEqual(["NSE:NIFTY26SEP24900CE"], [i["symbol"] for i in by_expiry])
+
+    def test_underlyings_and_expiries(self):
+        unders = {u["underlying"]: u for u in self.client.get("/api/instruments/underlyings").json()}
+        self.assertIn("NIFTY", unders)
+        self.assertEqual(75, unders["NIFTY"]["lot_size"])
+        self.assertEqual(3, unders["NIFTY"]["options"])
+        self.assertEqual(1, unders["NIFTY"]["futures"])
+
+        expiries = self.client.get("/api/instruments/expiries?underlying=NIFTY&include_past=true").json()
+        dates = [str(e["expiry_date"]) for e in expiries]
+        self.assertEqual(["2026-08-28", "2026-09-25"], dates)
+        august = expiries[0]
+        self.assertEqual(75, august["lot_size"])
+        self.assertEqual(1, august["calls"])
+        self.assertEqual(1, august["puts"])
+        self.assertEqual(1, august["futures"])
+
+    def test_refresh_is_idempotent(self):
+        from app import instruments
+
+        before = self.store.one("SELECT count(*) AS n FROM instruments")["n"]
+        instruments.refresh(self.store, fetch=lambda url: self.MASTER,
+                            sources={"NSE futures & options": "test://master.csv"})
+        self.assertEqual(before, self.store.one("SELECT count(*) AS n FROM instruments")["n"])
+
+    def test_status_reports_freshness(self):
+        status = self.client.get("/api/instruments/status").json()
+        self.assertGreaterEqual(status["total"], 7)
+        self.assertFalse(status["stale"])
+        self.assertIn("CE", [row["instrument_type"] for row in status["by_type"]])
+
+    def test_a_failing_segment_does_not_lose_the_others(self):
+        from app import instruments
+
+        def flaky(url):
+            if "broken" in url:
+                raise RuntimeError("404 from the provider")
+            return self.MASTER
+
+        summary = instruments.refresh(self.store, fetch=flaky,
+                                      sources={"NSE futures & options": "test://master.csv",
+                                               "BSE cash & indices": "test://broken.csv"})
+        self.assertEqual(7, summary["total"])
+        self.assertIn("BSE cash & indices", summary["errors"])
+
+
+@unittest.skipUnless(DSN, "DATABASE_URL is not set")
+class HolidayCalendarTests(unittest.TestCase):
+    """Holidays come from the broker, else the exchange, else the data."""
+
+    @classmethod
+    def setUpClass(cls):
+        from fastapi.testclient import TestClient
+        import app.main as main
+
+        cls.main = main
+        cls.store = main.store
+        cls.client = TestClient(main.app)
+        cls.client.__enter__()
+        cls.client.post("/api/auth/login", json={"username": "admin",
+                                                 "password": os.environ["ZONEAPP_ADMIN_PASSWORD"]})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.store.exec("DELETE FROM market_holidays WHERE holiday_date BETWEEN '2026-01-01' AND '2026-12-31'")
+        cls.client.__exit__(None, None, None)
+
+    def test_the_broker_is_asked_first(self):
+        from app import market_calendar
+
+        class BrokerWithCalendar:
+            def fetch_holidays(self, year):
+                return [(f"{year}-01-26", "Republic Day"), (f"{year}-08-15", "Independence Day")]
+
+        result = market_calendar.sync(self.store, BrokerWithCalendar(), 2026)
+        self.assertEqual("broker", result["source"])
+        self.assertEqual(2, result["found"])
+        rows = {str(h["holiday_date"]): h for h in self.client.get("/api/admin/holidays").json()}
+        self.assertEqual("Republic Day", rows["2026-01-26"]["label"])
+        self.assertEqual("broker", rows["2026-01-26"]["source"])
+
+    def test_manual_entries_are_never_overwritten(self):
+        from app import market_calendar
+
+        self.client.post("/api/admin/holidays", json={"holiday_date": "2026-03-05", "label": "Local holiday"})
+
+        class BrokerWithCalendar:
+            def fetch_holidays(self, year):
+                return [("2026-03-05", "Something else")]
+
+        market_calendar.sync(self.store, BrokerWithCalendar(), 2026)
+        rows = {str(h["holiday_date"]): h for h in self.client.get("/api/admin/holidays").json()}
+        self.assertEqual("Local holiday", rows["2026-03-05"]["label"])
+        self.assertEqual("manual", rows["2026-03-05"]["source"])
+
+    def test_exchange_list_is_used_when_the_broker_has_none(self):
+        from app import market_calendar
+
+        class Response:
+            status_code = 200
+            @staticmethod
+            def raise_for_status(): return None
+            @staticmethod
+            def json():
+                return {"FO": [{"tradingDate": "02-Oct-2026", "description": "Gandhi Jayanti"},
+                               {"tradingDate": "01-Jan-2030", "description": "Out of range"}]}
+
+        class BrokerWithoutCalendar:
+            def fetch_holidays(self, year):
+                raise NotImplementedError
+
+        result = market_calendar.sync(self.store, BrokerWithoutCalendar(), 2026,
+                                      exchange_get=lambda *a, **k: Response())
+        self.assertEqual("exchange", result["source"])
+        rows = {str(h["holiday_date"]): h for h in self.client.get("/api/admin/holidays").json()}
+        self.assertEqual("Gandhi Jayanti", rows["2026-10-02"]["label"])
+        self.assertNotIn("2030-01-01", rows)
+
+    def test_inference_from_stored_candles(self):
+        from app import market_calendar
+
+        holidays = market_calendar.inferred_holidays(self.store, year=2026)
+        for holiday, _label in holidays:
+            self.assertLess(holiday.weekday(), 5, "weekends must not be reported as holidays")
+        traded = self.store.q("SELECT DISTINCT d FROM intraday_bars WHERE extract(year from d)=2026")
+        have = set() if traded.empty else {r["d"] for r in traded.to_dict("records")}
+        self.assertFalse(have & {h for h, _ in holidays}, "a day with candles was called a holiday")
+
+    def test_endpoint_reports_what_it_used(self):
+        response = self.client.post("/api/admin/holidays/sync?year=2026")
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        self.assertIn(body["source"], ("broker", "exchange", "inferred", None))
+        self.assertIn("attempts", body)
+
+
 if __name__ == "__main__":
     unittest.main()

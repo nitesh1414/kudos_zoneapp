@@ -63,6 +63,14 @@ class BrokerAdapter(ABC):
         badge on the dashboard — never for zone computation, which only
         ever reads completed sessions."""
 
+    def fetch_holidays(self, year: int):
+        """Optional. Trading holidays as [(date, label), …] straight from the
+        provider. Raise NotImplementedError when the API has no such feed —
+        the caller then falls back to the exchange list and, failing that, to
+        inference from stored candles.
+        """
+        raise NotImplementedError(f"{self.name} does not publish a holiday calendar")
+
     def stream_live(self, symbol: str, on_tick):
         """Optional. Only implement if the broker supports websockets AND
         a live-updating dashboard feature is actually being built

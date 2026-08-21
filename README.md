@@ -261,6 +261,35 @@ tunable parameters and how to read the numbers honestly.
 Administrators read the same file inside the app under **Strategy &
 definitions**, alongside the parameter values in force on that installation.
 
+## Instrument master and the trading calendar
+
+Two reference datasets are kept in PostgreSQL and refreshed in the background —
+by the market-close job, on startup when they are stale, or on demand.
+
+**`instruments`** holds every contract the provider publishes: cash, indices,
+futures and options with `lot_size`, `tick_size`, `expiry_date`, `strike`,
+`option_type`, `underlying` and `isin`. The **Instruments** tab searches it and
+answers the questions that need it — every expiry for NIFTY, the lot size of
+each, the full option chain for one expiry — without touching the provider.
+
+- `GET /api/instruments?q=&type=&underlying=&expiry=` — search contracts
+- `GET /api/instruments/underlyings` — everything with a derivatives chain,
+  with its lot size and next expiry
+- `GET /api/instruments/expiries?underlying=NIFTY` — expiries with contract
+  counts and lot size
+- `GET /api/instruments/{symbol}/contract` — one contract in full
+- `POST /api/admin/instruments/refresh` — re-download the masters
+
+A segment that fails to download never loses the others, and a completely
+failed run keeps the record of the last good one.
+
+**Trading holidays** are no longer typed in. `POST /api/admin/holidays/sync`
+(also run by the daily job) tries three sources in order: the broker adapter's
+`fetch_holidays(year)` when the provider publishes one, then the exchange's
+public holiday master, then inference from the candles already stored — a
+weekday inside the covered range with no candles was a holiday. Each row
+records where it came from, and dates entered by hand are never overwritten.
+
 ## Market-close job
 
 `deploy/crontab.example` invokes one job at **17:00 Asia/Kolkata, Monday to

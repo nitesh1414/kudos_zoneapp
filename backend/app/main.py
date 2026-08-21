@@ -1,6 +1,7 @@
 """ZoneApp multi-tenant FastAPI application."""
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -18,7 +19,8 @@ from .broker_store import BrokerUnavailable, load_adapter, symbols_for
 from .brokers.base import BrokerError
 from .brokers.registry import INDIA_CANDLE_RESOLUTIONS, broker_types, get_broker_type, make_broker
 from .db import Store, records
-from .instruments import SOURCES, search_instruments
+from . import instruments as instrument_master
+from . import market_calendar
 from .jobs import run_market_close
 from .seeding import DEFAULT_DAYS, date_window, recent_runs, seed_all, seed_broker
 from . import symbols as watchlist
@@ -55,6 +57,27 @@ def bootstrap_watchlist():
     watchlist.ensure_a_default(store)   # also fixes databases upgraded from an older schema
 
 
+def bootstrap_instruments():
+    """The headline indices are always available; the full contract master is
+    downloaded in the background so startup never waits on the network."""
+    try:
+        if not store.one("SELECT symbol FROM instruments LIMIT 1"):
+            instrument_master.seed_indices(store)
+        if instrument_master.is_stale(store):
+            threading.Thread(target=_refresh_reference_data, name="reference-data", daemon=True).start()
+    except Exception as exc:
+        print(f"[zoneapp] instrument bootstrap skipped: {exc}")
+
+
+def _refresh_reference_data():
+    try:
+        from .jobs import refresh_reference_data
+        print("[zoneapp] refreshing instrument master and holiday calendar…")
+        print(f"[zoneapp] reference data: {refresh_reference_data(store)}")
+    except Exception as exc:                       # never take the app down for this
+        print(f"[zoneapp] reference data refresh failed: {exc}")
+
+
 @app.on_event("startup")
 def startup():
     print(f"[zoneapp] configuration: {ENV_FILE or 'environment variables only'}")
@@ -63,6 +86,7 @@ def startup():
               "encrypted with a key stored in the database. Set it in .env for production.")
     bootstrap_admin()
     bootstrap_watchlist()
+    bootstrap_instruments()
 
 
 def current_user(token=Cookie(None, alias=COOKIE_NAME)):
@@ -533,9 +557,41 @@ def data_status(_=Depends(current_user)):
     else: status,message="valid",f"Market data is live until {expiry.astimezone(ZoneInfo('Asia/Kolkata')).strftime('%d %b, %I:%M %p IST')}."
     return {"connected":status=="valid","status":status,"message":message,"broker":row["name"]}
 
+# ------------------------------ INSTRUMENT MASTER ------------------------------
 @app.get("/api/instruments")
-def instruments(q:str="",segment:str|None=None,limit:int=100,_=Depends(current_user)):
-    return {"items":search_instruments(q,segment,min(max(limit,1),200)),"segments":list(SOURCES)}
+def instruments(q:str="",segment:str|None=None,type:str|None=None,underlying:str|None=None,
+                expiry:str|None=None,limit:int=100,_=Depends(current_user)):
+    """Search every contract stored in the database: cash, futures and options
+    with their lot size, tick size, expiry and strike."""
+    return {"items":instrument_master.search(store,q,segment,type,underlying,expiry,limit),
+            "segments":list(instrument_master.SOURCES),
+            "types":["INDEX","EQ","FUT","CE","PE"]}
+
+@app.get("/api/instruments/status")
+def instrument_status(_=Depends(current_user)):
+    return instrument_master.stats(store)
+
+@app.get("/api/instruments/underlyings")
+def instrument_underlyings(q:str="",limit:int=200,_=Depends(current_user)):
+    return instrument_master.underlyings(store,q,limit)
+
+@app.get("/api/instruments/expiries")
+def instrument_expiries(underlying:str,include_past:bool=False,_=Depends(current_user)):
+    """Expiry dates for an underlying with contract counts and the lot size."""
+    return instrument_master.expiries(store,underlying,include_past)
+
+@app.get("/api/instruments/{symbol:path}/contract")
+def instrument_contract(symbol:str,_=Depends(current_user)):
+    row=instrument_master.contract(store,symbol)
+    if not row: raise HTTPException(404,"Unknown instrument")
+    return row
+
+@app.post("/api/admin/instruments/refresh")
+def refresh_instruments(background:BackgroundTasks,_=Depends(admin_user)):
+    """Re-download the provider's symbol masters in the background."""
+    background.add_task(instrument_master.refresh,store)
+    return {"ok":True,"refreshing":True,
+            "message":"Downloading the instrument masters; lot sizes and expiries update in place."}
 
 @app.get("/api/candles")
 def candles(resolution:str="15",limit:int=500,symbol:str|None=None,user=Depends(current_user)):
@@ -587,7 +643,17 @@ def put_gift_nifty(body: GiftNiftyIn, _=Depends(admin_user)):
 
 @app.get("/api/admin/holidays")
 def holidays(_=Depends(admin_user)):
-    return records(store.q("SELECT holiday_date,label FROM market_holidays ORDER BY holiday_date DESC"))
+    return records(store.q("""SELECT holiday_date,label,source,exchange FROM market_holidays
+                              ORDER BY holiday_date DESC"""))
+
+@app.post("/api/admin/holidays/sync")
+def sync_holidays(year:int|None=None,_=Depends(admin_user)):
+    """Pull the calendar from the broker, else the exchange, else infer it from
+    the candles already stored. Manual entries are left alone."""
+    adapter=None
+    try: _row,adapter=load_adapter(store)
+    except BrokerUnavailable: pass
+    return market_calendar.sync(store,adapter,year)
 @app.post("/api/admin/holidays")
 def add_holiday(body:HolidayIn,_=Depends(admin_user)):
     try: datetime.strptime(body.holiday_date,"%Y-%m-%d")

@@ -1,14 +1,36 @@
 import { useState } from 'react'
-import { CalendarDays, Plus, Trash2 } from 'lucide-react'
+import { CalendarDays, DownloadCloud, Plus, Trash2 } from 'lucide-react'
 import { api, endpoints } from '../../lib/api.js'
 import { useApi, fmtDate } from '../../lib/hooks.js'
-import { Button, Card, Empty, ErrorState, Field, IconButton, Input, Skeleton, TableWrap, Td, Th } from '../../components/ui.jsx'
+import { Badge, Button, Card, Empty, ErrorState, Field, IconButton, Input, Skeleton, TableWrap, Td, Th } from '../../components/ui.jsx'
+
+const SOURCE_TONE = { broker: 'up', exchange: 'brand', inferred: 'warn', manual: 'neutral' }
 
 export default function Holidays() {
   const { data, error, loading, reload } = useApi(endpoints.holidays)
   const [form, setForm] = useState({ holiday_date: '', label: 'Market holiday' })
   const [busy, setBusy] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [msg, setMsg] = useState('')
+  const [note, setNote] = useState(null)
+
+  const syncFromBroker = async () => {
+    setSyncing(true)
+    setNote(null)
+    try {
+      const res = await api.post(endpoints.syncHolidays)
+      setNote(
+        res.ok
+          ? { ok: true, text: `Loaded ${res.found} date(s) for ${res.year} from the ${res.source}; ${res.saved} stored.` }
+          : { ok: false, text: res.message },
+      )
+      reload()
+    } catch (err) {
+      setNote({ ok: false, text: err.message })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   const add = async (e) => {
     e.preventDefault()
@@ -47,7 +69,21 @@ export default function Holidays() {
         </form>
       </Card>
 
-      <Card title="Market holidays" icon={CalendarDays}>
+      <Card
+        title="Market holidays"
+        icon={CalendarDays}
+        subtitle="Pulled from the broker when it publishes a calendar, otherwise from the exchange, otherwise inferred from the candles already stored."
+        right={
+          <Button variant="ghost" size="sm" icon={DownloadCloud} loading={syncing} onClick={syncFromBroker}>
+            <span className="hidden sm:inline">Sync calendar</span>
+          </Button>
+        }
+      >
+        {note && (
+          <p className={`mb-3 rounded-xl px-3.5 py-3 text-[13px] ring-1 ${note.ok ? 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/25' : 'bg-amber-500/10 text-amber-300 ring-amber-500/25'}`}>
+            {note.text}
+          </p>
+        )}
         {loading && <Skeleton className="h-40" />}
         {error && <ErrorState error={error} onRetry={reload} />}
         {data && data.length === 0 && <Empty icon={CalendarDays} title="No holidays configured" hint="Weekends are skipped automatically." />}
@@ -57,6 +93,7 @@ export default function Holidays() {
               <tr>
                 <Th>Date</Th>
                 <Th>Label</Th>
+                <Th>Source</Th>
                 <Th className="text-right">Actions</Th>
               </tr>
             </thead>
@@ -65,6 +102,9 @@ export default function Holidays() {
                 <tr key={h.holiday_date} className="transition hover:bg-white/3">
                   <Td className="num font-semibold whitespace-nowrap">{fmtDate(h.holiday_date)}</Td>
                   <Td className="text-slate-300">{h.label}</Td>
+                  <Td>
+                    <Badge tone={SOURCE_TONE[h.source] || 'neutral'}>{h.source || 'manual'}</Badge>
+                  </Td>
                   <Td>
                     <div className="flex justify-end">
                       <IconButton icon={Trash2} tone="danger" label="Remove holiday" onClick={() => remove(String(h.holiday_date).slice(0, 10))} />

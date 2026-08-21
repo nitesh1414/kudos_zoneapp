@@ -74,9 +74,17 @@ export const endpoints = {
   brokerExchange: (id) => `/api/admin/brokers/${id}/exchange-token`,
   dataStatus: '/api/data-status',
   methodology: '/api/methodology',
+  instruments: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v != null))
+    return `/api/instruments${q.toString() ? `?${q}` : ''}`
+  },
+  instrumentStatus: '/api/instruments/status',
+  underlyings: '/api/instruments/underlyings',
+  expiries: (underlying) => `/api/instruments/expiries?underlying=${encodeURIComponent(underlying)}`,
+  refreshInstruments: '/api/admin/instruments/refresh',
+  syncHolidays: '/api/admin/holidays/sync',
   holidays: '/api/admin/holidays',
   holiday: (d) => `/api/admin/holidays/${d}`,
   giftNifty: '/api/admin/gift-nifty',
   marketClose: (force) => `/api/admin/jobs/market-close?force=${force ? 'true' : 'false'}`,
-  instruments: (q) => `/api/instruments?q=${encodeURIComponent(q)}&limit=25`,
 }

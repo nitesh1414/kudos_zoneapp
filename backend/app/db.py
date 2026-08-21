@@ -95,8 +95,25 @@ CREATE TABLE IF NOT EXISTS symbol_aliases (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS market_holidays (
-    holiday_date DATE PRIMARY KEY, label TEXT NOT NULL DEFAULT 'Market holiday'
+    holiday_date DATE PRIMARY KEY, label TEXT NOT NULL DEFAULT 'Market holiday',
+    source TEXT NOT NULL DEFAULT 'manual', exchange TEXT NOT NULL DEFAULT 'NSE',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS instruments (
+    symbol TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    exchange TEXT, segment TEXT, source TEXT,
+    instrument_type TEXT,                 -- INDEX / EQ / FUT / CE / PE
+    underlying TEXT,                      -- short name, e.g. NIFTY
+    expiry_date DATE, strike DOUBLE PRECISION, option_type TEXT,
+    lot_size INTEGER, tick_size DOUBLE PRECISION,
+    isin TEXT, fytoken TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_instruments_underlying ON instruments(underlying, expiry_date);
+CREATE INDEX IF NOT EXISTS idx_instruments_type ON instruments(instrument_type);
+CREATE INDEX IF NOT EXISTS idx_instruments_expiry ON instruments(expiry_date);
+CREATE INDEX IF NOT EXISTS idx_instruments_name ON instruments(lower(name));
 CREATE TABLE IF NOT EXISTS job_runs (
     id BIGSERIAL PRIMARY KEY, job_date DATE NOT NULL, broker_id BIGINT,
     symbol TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'market-close',
@@ -151,6 +168,9 @@ class Store:
             # both record a run for the same broker/symbol on the same day.
             con.execute("ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'market-close'")
             con.execute("ALTER TABLE tracked_symbols ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE")
+            con.execute("ALTER TABLE market_holidays ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual'")
+            con.execute("ALTER TABLE market_holidays ADD COLUMN IF NOT EXISTS exchange TEXT NOT NULL DEFAULT 'NSE'")
+            con.execute("ALTER TABLE market_holidays ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()")
             job_key = con.execute("""SELECT conname, pg_get_constraintdef(oid) definition FROM pg_constraint
                 WHERE conrelid='job_runs'::regclass AND contype='u'""").fetchone()
             if job_key and "kind" not in job_key["definition"]:
