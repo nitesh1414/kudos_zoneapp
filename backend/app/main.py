@@ -10,10 +10,8 @@ from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Header, HTTPExcep
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-
+from . import ENV_FILE  # importing the package loads .env before anything reads it
 from .auth import (COOKIE_NAME, create_session, decrypt_credentials, delete_session,
                    encrypt_credentials, hash_password, session_user, verify_password)
 from .broker_store import BrokerUnavailable, load_adapter, symbols_for
@@ -47,6 +45,10 @@ def bootstrap_admin():
 
 @app.on_event("startup")
 def startup():
+    print(f"[zoneapp] configuration: {ENV_FILE or 'environment variables only'}")
+    if not os.getenv("ZONEAPP_ENCRYPTION_KEY"):
+        print("[zoneapp] ZONEAPP_ENCRYPTION_KEY is not set — broker credentials are "
+              "encrypted with a key stored in the database. Set it in .env for production.")
     bootstrap_admin()
 
 

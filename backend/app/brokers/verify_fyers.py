@@ -2,15 +2,10 @@
 app/brokers/verify_fyers.py — Pre-flight sanity check for Fyers API integration (DEVELOPER_BIBLE.md §5.2).
 """
 
-import os
-from pathlib import Path
-from dotenv import load_dotenv
+# Importing the app package loads .env from backend/.env (or the repo root).
+import app  # noqa: F401
 
-# 1. Load .env
-env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
 
-# 2. Correct package import
 from app.broker_store import BrokerUnavailable, load_adapter
 from app.brokers.fyers_adapter import FyersAdapter
 from app.db import Store

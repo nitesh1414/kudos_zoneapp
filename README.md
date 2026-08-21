@@ -40,11 +40,44 @@ The local compose credentials are:
 - username: `admin`
 - password: `local-admin-password`
 
-Change every example secret before deployment. Docker Compose starts
-TimescaleDB/PostgreSQL and the API. Docker is optional. For a non-Docker install, install PostgreSQL 16 (and the
-TimescaleDB extension when available), create the database, copy
-`backend/.env.example` to `backend/.env`, and set `DATABASE_URL` and the other
-secrets. Then run:
+Compose reads the repository-root `.env` (copy `.env.example` to `.env`), so no
+credentials live in `docker-compose.yml`. Change every example secret before
+deployment.
+
+## Configuration (.env)
+
+PostgreSQL is the only supported database and its URL lives in `.env`:
+
+```bash
+cp .env.example backend/.env      # docker compose: cp .env.example .env
+```
+
+```ini
+DATABASE_URL=postgresql://zoneapp:your-password@127.0.0.1:5432/zoneapp
+ZONEAPP_ADMIN_USERNAME=admin
+ZONEAPP_ADMIN_PASSWORD=a-strong-password
+ZONEAPP_API_KEY=a-long-random-value          # market-close cron only
+ZONEAPP_ENCRYPTION_KEY=a-fernet-key          # encrypts stored broker credentials
+ZONEAPP_SECURE_COOKIES=true                  # false only on plain HTTP
+```
+
+`backend/app/__init__.py` loads this file, so the API, the market-close worker,
+the seeder, `scripts/seed.py`, `scripts/health_check.py` and the backfill CLI
+all read the same settings from any working directory. Real environment
+variables still override the file, which is what `deploy/zoneapp.service` and
+the cron entries rely on. Generate the encryption key with:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Leaving `ZONEAPP_ENCRYPTION_KEY` unset is supported — a key is generated and
+stored in the database — but set it explicitly in production and never change
+it on a live installation, or saved broker credentials must be entered again.
+
+For a non-Docker install, install PostgreSQL 16 (and the TimescaleDB extension
+when available), create the database and role, fill in `backend/.env`, then
+run:
 
 ```bash
 bash start_local.sh --no-docker
@@ -56,7 +89,9 @@ uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
 The application reads `backend/.env` itself; it does not require Docker or
-machine-level environment configuration.
+machine-level environment configuration. Schema creation and forward
+migrations run automatically on startup, on plain PostgreSQL as well as
+TimescaleDB.
 
 ## Tests
 

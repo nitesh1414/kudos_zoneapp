@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'backend'))
 
+import app  # noqa: F401  — loads backend/.env so DATABASE_URL is available
 from app.db import Store
 
 

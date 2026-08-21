@@ -7,12 +7,8 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 
-from dotenv import load_dotenv
-
 from .base import BrokerAdapter
 from .fyers_adapter import FyersAdapter
-
-load_dotenv()
 
 
 @dataclass(frozen=True)

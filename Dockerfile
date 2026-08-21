@@ -13,7 +13,6 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
 COPY scripts ./scripts
-COPY backend/.env .env
 # Compiled React single-page app served by FastAPI
 COPY --from=ui /backend/app/static ./backend/app/static
 ENV PYTHONPATH=/app/backend

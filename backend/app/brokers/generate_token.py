@@ -6,10 +6,7 @@ connection in the administrator UI.
 import os
 from urllib.parse import parse_qs, urlparse
 
-from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
-
-load_dotenv()
 
 
 def _settings():

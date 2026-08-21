@@ -115,8 +115,13 @@ class Store:
     def __init__(self, dsn: str | None = None):
         self._enc_key = None
         self.dsn = dsn or os.getenv("DATABASE_URL")
-        if not self.dsn or not self.dsn.startswith(("postgresql://", "postgres://")):
-            raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
+        if not self.dsn:
+            raise RuntimeError(
+                "DATABASE_URL is not set. Copy backend/.env.example to backend/.env and set "
+                "DATABASE_URL=postgresql://user:password@host:5432/zoneapp")
+        if not self.dsn.startswith(("postgresql://", "postgres://")):
+            raise RuntimeError(
+                f"DATABASE_URL must be a PostgreSQL URL (postgresql://...), got: {self.dsn.split(':')[0]}://…")
         self._init_schema()
         # Share one encryption key across the API, the worker and the CLI
         # scripts so credentials saved in one are readable in the others.

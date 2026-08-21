@@ -1,20 +1,25 @@
 """End-to-end test against a real PostgreSQL database.
 
-Run it with a disposable server, for example:
+DATABASE_URL comes from backend/.env (or the environment), exactly like the
+application itself. For a disposable server:
 
     pip install pgserver
     python -c "import pgserver;print(pgserver.get_server('/tmp/pgdata').get_uri())"
-    DATABASE_URL=<that uri> python -m unittest tests.test_integration_postgres
+    # put that URI in backend/.env, or export DATABASE_URL, then:
+    python -m unittest discover -s backend/tests
 
-The whole module is skipped when DATABASE_URL is not set, so the normal unit
+The whole module is skipped when no database is configured, so the normal unit
 suite still runs anywhere. A synthetic broker replaces the provider, so no
-network access and no credentials are needed.
+network access and no credentials are needed. Point it at a scratch database:
+the suite truncates the tables it uses.
 """
 import os
 import unittest
 from datetime import date, datetime, timedelta
 
 import pandas as pd
+
+import app  # loads backend/.env so the tests use the same configuration as the app
 
 DSN = os.getenv("DATABASE_URL", "")
 
