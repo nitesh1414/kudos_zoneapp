@@ -4,7 +4,10 @@ The credentials come from the stored broker connection whenever possible, so
 the token that is generated always belongs to the app id the connection uses.
 Environment variables are only a fallback for the CLI.
 """
+import base64
+import json
 import os
+import time
 from urllib.parse import parse_qs, urlparse
 
 from fyers_apiv3 import fyersModel
@@ -78,6 +81,57 @@ def clean_access_token(value: str, client_id: str | None = None) -> str:
         if rest and (not client_id or prefix.strip() == str(client_id).strip() or "-" in prefix):
             token = rest.strip()
     return token
+
+
+# --------------------------------------------------------------------------
+# Fyers hands out two long JWTs: the auth code and the access token. Pasting
+# the wrong one is the usual cause of "Could not authenticate the user", so we
+# read the (unverified) payload and say exactly what is wrong before the API
+# call is made.
+# --------------------------------------------------------------------------
+def decode_claims(token: str) -> dict:
+    """Best-effort read of a JWT payload. Never raises; {} when unreadable."""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload).decode())
+    except Exception:
+        return {}
+
+
+def looks_like_auth_code(token: str) -> bool:
+    """True when the JWT is an auth code rather than an access token."""
+    claims = decode_claims(token)
+    sub = str(claims.get("sub", "")).lower()
+    if sub:
+        return "auth" in sub and "access" not in sub
+    return False
+
+
+def describe_token(token: str, client_id: str | None = None) -> dict:
+    """What the token says about itself, and whether it can possibly work."""
+    claims = decode_claims(token)
+    app_id = str(claims.get("appId") or claims.get("aud") or "").strip()
+    expires = claims.get("exp")
+    info = {
+        "kind": str(claims.get("sub") or ("unknown" if not claims else "token")),
+        "app_id": app_id,
+        "user": claims.get("fy_id") or claims.get("display_name"),
+        "expires_at": expires,
+        "expired": bool(expires and float(expires) < time.time()),
+        "readable": bool(claims),
+    }
+    problem = None
+    if looks_like_auth_code(token):
+        problem = ("This is an auth code, not an access token. Paste the redirect URL or the auth code on its own "
+                   "and it will be exchanged for you.")
+    elif info["expired"]:
+        problem = "This token has already expired. Generate today's token."
+    elif app_id and client_id and app_id.split("-")[0] != str(client_id).split("-")[0]:
+        problem = (f"This token was issued for app id '{app_id}', but the connection uses '{client_id}'. "
+                   f"Generate the token from this connection, or correct its App / Client ID.")
+    info["problem"] = problem
+    return info
 
 
 if __name__ == "__main__":

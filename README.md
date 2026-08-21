@@ -143,7 +143,12 @@ Client management supports create, edit (name, password reset), enable/disable
 and delete, in either a card or a table view.
 
 The token field also accepts a pasted access token, an `APPID-100:token`
-string, or the whole redirect URL — whatever the provider showed you.
+string, an auth code, or the whole redirect URL — whatever the provider showed
+you. Fyers issues both the auth code and the access token as long JWTs, so the
+payload is inspected before the provider is called: an auth code is exchanged
+automatically, and a token for a different app id or from a previous day is
+rejected with that exact reason instead of the generic
+`Could not authenticate the user`.
 
 The symbol picker searches Fyers' complete Indian symbol masters for NSE cash
 and indices, NSE derivatives/currency, BSE cash/derivatives, and MCX

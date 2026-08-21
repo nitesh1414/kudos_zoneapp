@@ -331,13 +331,23 @@ def broker_login_url(broker_id:int,_=Depends(admin_user)):
 
 def _save_token(row,credentials,token:str,broker_id:int):
     """Verify a token with the provider and store it encrypted."""
+    from .brokers.generate_token import describe_token
     credentials=dict(credentials); credentials["access_token"]=token
     status=make_broker(row["broker_type"],credentials).auth_status()
     if not status.connected:
-        raise HTTPException(400,
-            f"Token was not saved: {status.message}. Check that the token belongs to app id "
-            f"'{credentials.get('client_id') or 'unknown'}', that it is today's token, and that you "
-            f"pasted the access token rather than the auth code.")
+        info=describe_token(token,credentials.get("client_id")) if row["broker_type"]=="fyers" else {}
+        detail=f"Token was not saved: {status.message}."
+        if info.get("problem"):
+            detail+=" "+info["problem"]
+        elif info.get("readable"):
+            detail+=(f" The token itself reads as app id '{info['app_id'] or 'unknown'}', user "
+                     f"'{info['user'] or 'unknown'}', which matches this connection — so the provider refused it "
+                     f"for another reason: it may have been replaced by a newer token for the same app, or the "
+                     f"app may be inactive. Press Generate token to create a fresh one.")
+        else:
+            detail+=(" The value could not be read as a Fyers token. Press Generate token on this connection, or "
+                     "paste the access token or the full redirect URL exactly as the provider shows it.")
+        raise HTTPException(400,detail)
     kind=get_broker_type(row["broker_type"]); now=datetime.now(timezone.utc)
     expires=now+timedelta(hours=kind.token_ttl_hours) if kind.token_ttl_hours else None
     store.exec("UPDATE broker_connections SET credentials=?::jsonb,token_updated_at=?,token_expires_at=?,updated_at=now() WHERE id=?",
@@ -349,7 +359,8 @@ def _save_token(row,credentials,token:str,broker_id:int):
 def update_broker_token(broker_id:int,body:BrokerTokenIn,background:BackgroundTasks,_=Depends(admin_user)):
     """Save today's access token. Accepts the token itself, or the auth code /
     redirect URL from the provider sign-in, which is exchanged here."""
-    from .brokers.generate_token import clean_access_token, exchange_code_for_token, read_auth_code
+    from .brokers.generate_token import (clean_access_token, describe_token, exchange_code_for_token,
+                                         looks_like_auth_code, read_auth_code)
     row=store.one("SELECT * FROM broker_connections WHERE id=?",[broker_id])
     if not row: raise HTTPException(404,"Broker not found")
     credentials=decrypt_credentials(row["credentials"])
@@ -357,16 +368,27 @@ def update_broker_token(broker_id:int,body:BrokerTokenIn,background:BackgroundTa
     if not raw: raise HTTPException(400,"Provide an access token or an auth code")
     oauth=row["broker_type"]=="fyers"   # only Fyers has a browser sign-in flow
     exchanged=False
-    if oauth and (body.auth_code or read_auth_code(raw)!=raw or len(raw)<60):
-        # this is an auth code or a redirect URL, not a JWT access token
-        try:
-            raw=exchange_code_for_token(raw,credentials); exchanged=True
-        except Exception as exc:
-            if body.auth_code: raise HTTPException(400,f"Token exchange failed: {exc}")
+    if oauth:
+        candidate=clean_access_token(raw,credentials.get("client_id"))
+        # An auth code, a redirect URL, or something too short to be a JWT all
+        # have to be exchanged first. Auth codes are long JWTs too, so the
+        # payload is what tells them apart — not the length.
+        if body.auth_code or read_auth_code(raw)!=raw or len(candidate)<60 or looks_like_auth_code(candidate):
+            try:
+                raw=exchange_code_for_token(raw,credentials); exchanged=True
+            except Exception as exc:
+                if body.auth_code or looks_like_auth_code(candidate):
+                    reason=str(exc)
+                    if "Max retries" in reason or "Connection" in reason:
+                        reason="the provider could not be reached from this server"
+                    raise HTTPException(400,f"Could not exchange the auth code: {reason}")
     token=clean_access_token(raw,credentials.get("client_id")) if oauth else raw
-    if oauth and len(token)<20:
-        raise HTTPException(400,"That does not look like a Fyers access token. Paste the access token, "
-                                "the auth code, or the full redirect URL.")
+    if oauth:
+        if len(token)<20:
+            raise HTTPException(400,"That does not look like a Fyers access token. Paste the access token, "
+                                    "the auth code, or the full redirect URL.")
+        info=describe_token(token,credentials.get("client_id"))
+        if info["problem"]: raise HTTPException(400,info["problem"])
     status,expires=_save_token(row,credentials,token,broker_id)
     seeded=[]
     if body.seed:

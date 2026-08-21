@@ -101,6 +101,7 @@ export default function Brokers() {
   const [confirm, setConfirm] = useState(null)
   const [result, setResult] = useState(null)
   const [seedDays, setSeedDays] = useState(180)
+  const [tokenError, setTokenError] = useState('')
 
   const spec = useMemo(() => (types.data || []).find((t) => t.key === typeKey), [types.data, typeKey])
 
@@ -138,12 +139,13 @@ export default function Brokers() {
         seed_days: seedDays,
       })
       setResult({ ok: true, text: `${res.message || 'Token saved.'} ${res.seed_message || ''}`.trim() })
+      setTokenError('')
       setTokenFor(null)
       setTokenValue('')
       brokers.reload()
       setTimeout(runs.reload, 800)
     } catch (err) {
-      setResult({ ok: false, text: err.message })
+      setTokenError(err.message)
     } finally {
       setBusy(false)
     }
@@ -261,7 +263,7 @@ export default function Brokers() {
                   <Td>
                     <div className="flex flex-wrap justify-end gap-1.5">
                       <Button variant="ghost" size="sm" icon={KeyRound}
-                              onClick={() => { setTokenFor(b); setTokenValue('') }}>
+                              onClick={() => { setTokenFor(b); setTokenValue(''); setTokenError('') }}>
                         <span className="hidden lg:inline">Generate token</span>
                         <span className="lg:hidden">Token</span>
                       </Button>
@@ -371,6 +373,11 @@ export default function Brokers() {
             <Input value={tokenValue} onChange={(e) => setTokenValue(e.target.value)}
                    placeholder="Paste today's token, auth code, or redirect URL" />
           </Field>
+          {tokenError && (
+            <p className="rounded-xl bg-rose-500/10 px-3.5 py-3 text-[12.5px] leading-relaxed text-rose-300 ring-1 ring-rose-500/25">
+              {tokenError}
+            </p>
+          )}
           <Field label="Seed history after saving" hint="Candles are backfilled and zones rebuilt in the background so dependent services have data straight away.">
             <select
               className="w-full rounded-xl border border-white/10 bg-ink-900/80 px-3 py-2.5 text-sm text-slate-100"

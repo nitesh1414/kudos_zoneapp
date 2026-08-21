@@ -257,5 +257,55 @@ class SeedWindowTests(unittest.TestCase):
             seeding.seed_symbol = original
 
 
+
+
+
+class FyersTokenDiagnosticsTests(unittest.TestCase):
+    """Auth codes and access tokens are both long JWTs — tell them apart."""
+
+    @staticmethod
+    def _jwt(payload):
+        import base64, json as _json
+        body = base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode().rstrip("=")
+        return "eyJhbGciOiJIUzI1NiJ9." + body + ".signature"
+
+    def test_auth_code_is_recognised(self):
+        from app.brokers.generate_token import describe_token, looks_like_auth_code
+
+        auth_code = self._jwt({"sub": "authCode", "appId": "937RN4D2JZ", "exp": 9999999999})
+        self.assertTrue(looks_like_auth_code(auth_code))
+        problem = describe_token(auth_code, "937RN4D2JZ-100")["problem"]
+        self.assertIn("auth code", problem)
+
+    def test_access_token_for_another_app_is_rejected(self):
+        from app.brokers.generate_token import describe_token, looks_like_auth_code
+
+        token = self._jwt({"sub": "access_token", "appId": "OTHERAPP", "fy_id": "XY1234", "exp": 9999999999})
+        self.assertFalse(looks_like_auth_code(token))
+        problem = describe_token(token, "937RN4D2JZ-100")["problem"]
+        self.assertIn("OTHERAPP", problem)
+        self.assertIn("937RN4D2JZ-100", problem)
+
+    def test_expired_token_is_named(self):
+        from app.brokers.generate_token import describe_token
+
+        token = self._jwt({"sub": "access_token", "appId": "937RN4D2JZ", "exp": 1000000})
+        self.assertIn("expired", describe_token(token, "937RN4D2JZ-100")["problem"].lower())
+
+    def test_todays_token_for_the_right_app_passes(self):
+        from app.brokers.generate_token import describe_token
+
+        token = self._jwt({"sub": "access_token", "appId": "937RN4D2JZ", "fy_id": "XY1234", "exp": 9999999999})
+        info = describe_token(token, "937RN4D2JZ-100")
+        self.assertIsNone(info["problem"])
+        self.assertEqual("XY1234", info["user"])
+
+    def test_unreadable_values_do_not_crash(self):
+        from app.brokers.generate_token import describe_token, looks_like_auth_code
+
+        self.assertFalse(looks_like_auth_code("not-a-jwt"))
+        self.assertFalse(describe_token("not-a-jwt", "APP-100")["readable"])
+
+
 if __name__ == "__main__":
     unittest.main()
