@@ -52,13 +52,61 @@ def delete_session(store, token: str | None):
         store.exec("DELETE FROM sessions WHERE token_hash=?", [hashlib.sha256(token.encode()).hexdigest()])
 
 
+# Every process that touches the database (API, worker, CLI scripts) must derive
+# the same key, otherwise stored broker credentials become unreadable. Order:
+#   1. ZONEAPP_ENCRYPTION_KEY  — what production should set
+#   2. a random key persisted in the database, created on first use
+#   3. legacy key derived from ZONEAPP_API_KEY (read-only, for old installations)
+_KEY_PROVIDERS = []
+
+
+def use_key_provider(provider):
+    """Register a callable returning a stored Fernet key.
+
+    Providers accumulate rather than replace each other: a process that talks
+    to more than one database (the migration tooling, tests) must still be able
+    to read rows written by the first one. Encryption always uses the first key
+    in the list, so nothing is re-encrypted behind the operator's back.
+    """
+    if provider not in _KEY_PROVIDERS:
+        _KEY_PROVIDERS.append(provider)
+
+
+def new_encryption_key() -> str:
+    return Fernet.generate_key().decode()
+
+
+def _legacy_key() -> str:
+    seed = os.getenv("ZONEAPP_API_KEY", "zoneapp-local-development-key")
+    return base64.urlsafe_b64encode(hashlib.sha256(seed.encode()).digest()).decode()
+
+
+def _keys() -> list:
+    keys = []
+    env_key = os.getenv("ZONEAPP_ENCRYPTION_KEY")
+    if env_key:
+        keys.append(env_key.strip())
+    for provider in _KEY_PROVIDERS:
+        try:
+            stored = provider()
+        except Exception:
+            stored = None
+        if stored:
+            keys.append(stored)
+    keys.append(_legacy_key())
+    out = []
+    for key in dict.fromkeys(keys):
+        try:
+            out.append(Fernet(key.encode()))
+        except (ValueError, TypeError):
+            continue
+    if not out:
+        raise ValueError("ZONEAPP_ENCRYPTION_KEY is not a valid Fernet key")
+    return out
+
+
 def _fernet():
-    key = os.getenv("ZONEAPP_ENCRYPTION_KEY")
-    if not key:
-        # Stable fallback for local development; production should set a distinct key.
-        seed = os.getenv("ZONEAPP_API_KEY", "zoneapp-local-development-key")
-        key = base64.urlsafe_b64encode(hashlib.sha256(seed.encode()).digest()).decode()
-    return Fernet(key.encode())
+    return _keys()[0]
 
 
 def encrypt_credentials(data: dict) -> dict:
@@ -67,6 +115,14 @@ def encrypt_credentials(data: dict) -> dict:
 
 def decrypt_credentials(data: dict) -> dict:
     try:
-        return json.loads(_fernet().decrypt(data["encrypted"].encode()).decode())
-    except (KeyError, InvalidToken, ValueError, TypeError):
-        raise ValueError("Broker credentials cannot be decrypted; check ZONEAPP_ENCRYPTION_KEY")
+        token = data["encrypted"].encode()
+    except (KeyError, TypeError, AttributeError):
+        raise ValueError("Stored broker credentials are malformed")
+    for fernet in _keys():
+        try:
+            return json.loads(fernet.decrypt(token).decode())
+        except (InvalidToken, ValueError, TypeError):
+            continue
+    raise ValueError(
+        "Broker credentials cannot be decrypted with the current key. "
+        "Restore ZONEAPP_ENCRYPTION_KEY, or re-enter the broker credentials.")

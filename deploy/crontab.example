@@ -1,5 +1,8 @@
-# Install for the zoneapp service account. CRON_TZ makes this independent of
-# the server timezone. The endpoint checks weekends/market_holidays and is
+# Install for the zoneapp service account (or run scripts/setup_cron.sh).
+# CRON_TZ makes this independent of the server timezone. One call covers every
+# tracked symbol; the endpoint checks weekends/market_holidays and is
 # idempotent, so retries cannot duplicate a completed run.
 CRON_TZ=Asia/Kolkata
 0 17 * * 1-5 . /opt/zoneapp/.env; curl --retry 3 --retry-delay 60 --fail-with-body -X POST http://127.0.0.1:8000/api/jobs/market-close -H "X-API-Key: ${ZONEAPP_API_KEY}" >> /opt/zoneapp/data/market-close.log 2>&1
+# Data sanity guard, 20 minutes after the job:
+20 17 * * 1-5 . /opt/zoneapp/.env; cd /opt/zoneapp && ./.venv/bin/python scripts/health_check.py >> /opt/zoneapp/data/health-check.log 2>&1

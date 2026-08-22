@@ -7,12 +7,8 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 
-from dotenv import load_dotenv
-
 from .base import BrokerAdapter
 from .fyers_adapter import FyersAdapter
-
-load_dotenv()
 
 
 @dataclass(frozen=True)
@@ -59,8 +55,17 @@ def make_broker(kind: str, credentials: dict) -> BrokerAdapter:
 register(BrokerType(
     key="fyers", label="Fyers", adapter=FyersAdapter,
     fields=(
-        {"name": "client_id", "label": "App / Client ID", "secret": False, "default": os.getenv("FYERS_CLIENT_ID", "")},
-        {"name": "access_token", "label": "Access token", "secret": True, "required": False},
+        {"name": "client_id", "label": "App / Client ID", "secret": False,
+         "hint": "FYERS_CLIENT_ID, e.g. XXXXXXXXXX-100",
+         "default": os.getenv("FYERS_CLIENT_ID", "")},
+        {"name": "secret_key", "label": "Secret key", "secret": True,
+         "hint": "FYERS_SECRET_KEY — needed to generate the daily token",
+         "default": os.getenv("FYERS_SECRET_KEY", "")},
+        {"name": "redirect_uri", "label": "Redirect URI", "secret": False,
+         "hint": "FYERS_REDIRECT_URI — must match the app configuration exactly",
+         "default": os.getenv("FYERS_REDIRECT_URI", "https://fyers.in/")},
+        {"name": "access_token", "label": "Access token", "secret": True, "required": False,
+         "hint": "Generated below; expires daily"},
     ),
     token_ttl_hours=24,
     defaults={
