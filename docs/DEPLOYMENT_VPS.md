@@ -259,8 +259,9 @@ pm2 restart zoneapp
    token; historical seeding starts automatically after saving.
 4. **Market symbols** / **Market-close job** tabs should show data appearing.
 5. Client tabs visible: Overview, Next-session zones, Base rates, Gap & CPR
-   (the **Sessions** tab is currently commented out in the frontend source —
-   see `frontend/src/components/Layout.jsx` and `frontend/src/App.jsx`).
+   (the **Sessions** tab is hidden from clients and listed for admins only —
+   see the `adminOnly` flag in `frontend/src/components/Layout.jsx` and the
+   route wrapper in `frontend/src/App.jsx`).
 
 Unauthenticated checks from the server:
 

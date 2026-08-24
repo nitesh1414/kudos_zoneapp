@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  Activity, BarChart3, BookOpen, Boxes, CalendarDays, CandlestickChart, ChevronDown,
+  Activity, BarChart3, BookOpen, Boxes, CalendarDays, CalendarRange, CandlestickChart, ChevronDown,
   DatabaseZap, Layers, LayoutDashboard, LogOut, Menu, PlayCircle, Plug, RefreshCw, Users, X,
 } from 'lucide-react'
-// CalendarRange was the icon of the (temporarily hidden) Sessions tab.
-// import { CalendarRange } from 'lucide-react'
 import { useAuth } from '../lib/auth.jsx'
 import { useSymbol } from '../lib/symbol.jsx'
 import { Avatar, Badge, Button } from './ui.jsx'
@@ -18,9 +16,10 @@ export const NAV = [
       { to: '/dashboard/zones', label: 'Next-session zones', icon: Layers },
       { to: '/dashboard/base-rates', label: 'Base rates', icon: BarChart3 },
       { to: '/dashboard/gap-cpr', label: 'Gap & CPR', icon: Activity },
-      // Temporarily hidden: Sessions tab (last client tab). Re-enable by
-      // uncommenting the line below and restoring the route in App.jsx.
-      // { to: '/dashboard/sessions', label: 'Sessions', icon: CalendarRange },
+      // Hidden from the client sidenav, still listed for administrators.
+      // Re-enable for everyone by removing the adminOnly flag (and the
+      // adminOnly wrapper on the route in App.jsx).
+      { to: '/dashboard/sessions', label: 'Sessions', icon: CalendarRange, adminOnly: true },
     ],
   },
   {
@@ -62,7 +61,7 @@ function NavItems({ isAdmin, onNavigate }) {
         <div key={group.section}>
           <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.14em] text-slate-500 uppercase">{group.section}</p>
           <div className="space-y-1">
-            {group.items.map(({ to, label, icon: Icon }) => (
+            {group.items.filter((item) => !item.adminOnly || isAdmin).map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -92,7 +91,9 @@ function NavItems({ isAdmin, onNavigate }) {
 
 /** Horizontal tab strip — the primary switcher on small screens. */
 function TabStrip({ isAdmin }) {
-  const items = NAV.filter((g) => !g.admin || isAdmin).flatMap((g) => g.items)
+  const items = NAV.filter((g) => !g.admin || isAdmin)
+    .flatMap((g) => g.items)
+    .filter((item) => !item.adminOnly || isAdmin)
   return (
     <div className="scrollbar-thin -mx-4 overflow-x-auto px-4 lg:hidden">
       <div className="flex w-max gap-1.5 pb-3">
