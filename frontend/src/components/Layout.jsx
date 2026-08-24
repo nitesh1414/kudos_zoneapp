@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  Activity, BarChart3, BookOpen, Boxes, CalendarDays, CalendarRange, CandlestickChart, ChevronDown,
+  Activity, BarChart3, BookOpen, Boxes, CalendarDays, CandlestickChart, ChevronDown,
   DatabaseZap, Layers, LayoutDashboard, LogOut, Menu, PlayCircle, Plug, RefreshCw, Users, X,
 } from 'lucide-react'
+// CalendarRange was the icon of the (temporarily hidden) Sessions tab.
+// import { CalendarRange } from 'lucide-react'
 import { useAuth } from '../lib/auth.jsx'
 import { useSymbol } from '../lib/symbol.jsx'
 import { Avatar, Badge, Button } from './ui.jsx'
@@ -16,7 +18,9 @@ export const NAV = [
       { to: '/dashboard/zones', label: 'Next-session zones', icon: Layers },
       { to: '/dashboard/base-rates', label: 'Base rates', icon: BarChart3 },
       { to: '/dashboard/gap-cpr', label: 'Gap & CPR', icon: Activity },
-      { to: '/dashboard/sessions', label: 'Sessions', icon: CalendarRange },
+      // Temporarily hidden: Sessions tab (last client tab). Re-enable by
+      // uncommenting the line below and restoring the route in App.jsx.
+      // { to: '/dashboard/sessions', label: 'Sessions', icon: CalendarRange },
     ],
   },
   {

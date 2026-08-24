@@ -7,7 +7,8 @@ import Overview from './pages/Overview.jsx'
 import Zones from './pages/Zones.jsx'
 import BaseRates from './pages/BaseRates.jsx'
 import GapCpr from './pages/GapCpr.jsx'
-import Sessions from './pages/Sessions.jsx'
+// Sessions tab temporarily hidden — restore this import with the route below.
+// import Sessions from './pages/Sessions.jsx'
 import Clients from './pages/admin/Clients.jsx'
 import Symbols from './pages/admin/Symbols.jsx'
 import Seeding from './pages/admin/Seeding.jsx'
@@ -50,7 +51,9 @@ export default function App() {
         <Route path="/dashboard/zones" element={<Zones />} />
         <Route path="/dashboard/base-rates" element={<BaseRates />} />
         <Route path="/dashboard/gap-cpr" element={<GapCpr />} />
+        {/* Temporarily hidden along with its NAV entry in Layout.jsx.
         <Route path="/dashboard/sessions" element={<Sessions />} />
+        */}
         <Route
           path="/admin/clients"
           element={
