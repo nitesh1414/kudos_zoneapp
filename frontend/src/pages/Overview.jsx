@@ -7,6 +7,7 @@ import { endpoints } from '../lib/api.js'
 import { useSymbol, withSymbol } from '../lib/symbol.jsx'
 import { useAuth } from '../lib/auth.jsx'
 import { Badge, Button, Card, Empty, ErrorState, Skeleton, Stars, Stat, TableWrap, Td, Th } from '../components/ui.jsx'
+import SessionChart from '../components/SessionChart.jsx'
 import { ZoneRow, resultTone } from './Zones.jsx'
 
 function StatsRow() {
@@ -233,6 +234,9 @@ export default function Overview() {
           </Card>
 
           <RecapCard recap={data.session_recap} match={data.match_check} showStars={isAdmin} />
+
+          {/* TradingView-style chart: previous session result + next session levels */}
+          <SessionChart />
 
           <div className="card animate-rise flex gap-3 px-4 py-3.5 sm:px-5">
             <Info size={16} className="mt-0.5 shrink-0 text-slate-500" />

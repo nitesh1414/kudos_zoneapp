@@ -51,6 +51,13 @@ export default function App() {
         <Route path="/dashboard/base-rates" element={<BaseRates />} />
         <Route path="/dashboard/gap-cpr" element={<GapCpr />} />
         <Route path="/dashboard/sessions" element={<Sessions />} />
+        {/* Legacy/alternate paths a Sessions click may emit from an older
+            cached build must land on the Sessions page, never fall through
+            to the Overview tab via the catch-all below. */}
+        <Route path="/dashboard/session" element={<Navigate to="/dashboard/sessions" replace />} />
+        <Route path="/dashboard/sessions/*" element={<Navigate to="/dashboard/sessions" replace />} />
+        <Route path="/sessions" element={<Navigate to="/dashboard/sessions" replace />} />
+        <Route path="/admin/sessions" element={<Navigate to="/dashboard/sessions" replace />} />
         <Route
           path="/admin/clients"
           element={
