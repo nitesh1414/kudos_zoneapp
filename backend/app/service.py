@@ -296,6 +296,29 @@ def _outcome_for(store, symbol: str, target_date: str) -> dict:
     return {r['label']: r for r in out}
 
 
+def _zone_result(actual: dict) -> str:
+    """One-word outcome for a zone in a completed session. This mapping is
+    surfaced verbatim on the dashboards and on the session chart."""
+    if actual.get('touched'):
+        if actual.get('broke') and not actual.get('held'):
+            return 'BROKE'
+        if actual.get('held'):
+            return 'HELD'
+        if actual.get('bounced') and not actual.get('broke'):
+            return 'TOUCHED'
+        return 'TOUCHED' if not actual.get('broke') else 'BROKE'
+    return 'NOT REACHED'
+
+
+def _zone_side(label: str) -> str:
+    return 'R' if label.startswith('R') else ('S' if label.startswith('S') else 'AT')
+
+
+def _sheet_zones(sheet):
+    return (list(sheet.resistances) + list(sheet.supports) +
+            ([sheet.at_zone] if sheet.at_zone else []))
+
+
 def session_recap(store, symbol: str, target_date: str = None, p: ZoneParams = None):
     """Recap one past (completed) session."""
     p = p or ZoneParams()
@@ -340,17 +363,7 @@ def session_recap(store, symbol: str, target_date: str = None, p: ZoneParams = N
     zone_payload = []
     for z in zones:
         actual = outcomes.get(z.label, {})
-        if actual.get('touched'):
-            if actual.get('broke') and not actual.get('held'):
-                result = 'BROKE'
-            elif actual.get('held'):
-                result = 'HELD'
-            elif actual.get('bounced') and not actual.get('broke'):
-                result = 'TOUCHED'
-            else:
-                result = 'TOUCHED' if not actual.get('broke') else 'BROKE'
-        else:
-            result = 'NOT REACHED'
+        result = _zone_result(actual) if actual else 'NOT REACHED'
         zone_payload.append(dict(
             label=z.label, lo=z.lo, hi=z.hi, key=z.key,
             key_name=z.key_name, stars=z.stars, weight=z.weight,
@@ -438,6 +451,102 @@ def match_check(store, symbol: str, target_date: str = None, p: ZoneParams = Non
         verdict=verdict,
         commentary=commentary,
     )
+
+
+def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
+                  date_from: str = None, date_to: str = None, resolution: str = '15'):
+    """Candles + zone levels for the TradingView-style chart on the Overview tab.
+
+    Default view: the last completed session, its zones with their outcomes,
+    and the forward-looking (next session) sheet. A single `date` shows that
+    stored session; a `date_from`/`date_to` range shows every stored candle in
+    the window with the levels (and result) of its last session.
+    """
+    p = p or ZoneParams()
+    daily = store.daily(symbol)
+    if daily.empty:
+        raise LookupError('No candles stored yet for this symbol')
+    days = [str(d) for d in daily['d']]
+    first_date, last_date = days[0], days[-1]
+
+    def parse(name, value):
+        if value is None:
+            return None
+        try:
+            datetime.strptime(value, '%Y-%m-%d')
+        except ValueError:
+            raise ValueError(f'{name} must be YYYY-MM-DD')
+        return value
+
+    date, date_from, date_to = parse('date', date), parse('date_from', date_from), parse('date_to', date_to)
+
+    # Stored candles may be sparse (weekends, holidays, partial history), so
+    # requested dates snap to the nearest session that actually has bars.
+    def stored_on_or_before(day):
+        known = [d for d in days if d <= day]
+        return known[-1] if known else None
+
+    def stored_on_or_after(day):
+        known = [d for d in days if d >= day]
+        return known[0] if known else None
+
+    if date:
+        # A weekend/holiday pick shows the last session before it instead.
+        start = end = stored_on_or_before(date)
+        if end is None:
+            raise LookupError(f'No candles stored on or before {date}')
+    else:
+        if date_from and date_from > last_date:
+            raise LookupError(f'Range starts after the last stored session ({last_date})')
+        end = stored_on_or_before(date_to or last_date) or last_date
+        # Without an explicit start the view is one session, not the whole history.
+        start = (stored_on_or_after(date_from) or first_date) if date_from else end
+        if start > end:
+            raise LookupError(f'No candles stored between {date_from} and {date_to}')
+        span = days.index(end) - days.index(start) + 1
+        if resolution != 'D' and span > 62:
+            # Keep intraday payloads bounded; the chart tells the user when
+            # its window was cut short.
+            start = days[days.index(end) - 61]
+
+    idx = days.index(end)
+    basis_meta = None
+    day_type = None
+    levels = []
+    outcomes = _outcome_for(store, symbol, end)
+    if idx > 0:
+        basis = daily.iloc[idx - 1]
+        sheet = build_sheet(str(basis.d), float(basis.h), float(basis.l), float(basis.c), p)
+        day_type = sheet.day_type
+        basis_meta = dict(date=str(basis.d), high=float(basis.h), low=float(basis.l), close=float(basis.c))
+        for z in _sheet_zones(sheet):
+            actual = outcomes.get(z.label)
+            levels.append(dict(label=z.label, lo=z.lo, hi=z.hi, key=z.key, key_name=z.key_name,
+                               side=_zone_side(z.label),
+                               result=_zone_result(actual) if actual else None))
+        levels.sort(key=lambda r: -r['key'])
+
+    # The next session's sheet exists only past the last stored day; it is the
+    # actionable overlay whenever the viewport ends there.
+    next_levels = []
+    if end == last_date:
+        last = daily.iloc[-1]
+        fwd = build_sheet(last_date, float(last.h), float(last.l), float(last.c), p)
+        for z in _sheet_zones(fwd):
+            next_levels.append(dict(label=z.label, lo=z.lo, hi=z.hi, key=z.key,
+                                    key_name=z.key_name, side=_zone_side(z.label)))
+        next_levels.sort(key=lambda r: -r['key'])
+
+    bars = store.bars_range(symbol, start, end, resolution)
+    from .db import records
+    candles = records(bars)
+    return dict(symbol=symbol, resolution=resolution,
+                mode='day' if start == end else 'range',
+                date=end, date_from=start, date_to=end,
+                first_date=first_date, last_date=last_date,
+                basis=basis_meta, day_type=day_type,
+                levels=levels, next_levels=next_levels,
+                candles=candles, truncated=len(candles) >= 5000)
 
 
 def dashboard_payload(store, symbol: str, p: ZoneParams = None):

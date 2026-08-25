@@ -30,6 +30,116 @@ const readBody = (req) =>
     })
   })
 
+// ---- deterministic fake candles for the session chart ----------------------
+const round2 = (v) => Math.round(v * 100) / 100
+const fnv1a = (s) => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return h >>> 0
+}
+const prng = (a) => () => {
+  a |= 0; a = (a + 0x6d2b79f5) | 0
+  let t = Math.imul(a ^ (a >>> 15), 1 | a)
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+const FIRST_STORED = '2024-03-04'
+const LAST_STORED = '2026-08-20'
+
+const businessDays = (from, to, max = 62) => {
+  const out = []
+  const d = new Date(`${from}T00:00:00Z`)
+  const end = new Date(`${to}T00:00:00Z`)
+  while (d <= end && out.length < max) {
+    const w = d.getUTCDay()
+    if (w !== 0 && w !== 6) out.push(d.toISOString().slice(0, 10))
+    d.setUTCDate(d.getUTCDate() + 1)
+  }
+  return out
+}
+
+/** NSE session: 09:15 → 15:15 candle starts, like the real feed. */
+const mockCandles = (days, resolution, seedBase) => {
+  const step = resolution === 'D' ? null : Math.max(1, Number(resolution) || 15)
+  const rand = prng(fnv1a(`candles:${seedBase}:${resolution}`))
+  let px = 24760
+  const bars = []
+  for (const day of days) {
+    const times = []
+    if (step) for (let t = 9 * 60 + 15; t <= 15 * 60 + 15; t += step) times.push(t)
+    else times.push(9 * 60 + 15)
+    for (const t of times) {
+      const o = px
+      px = round2(px + (rand() - 0.5) * (step ? 18 : 140))
+      const hh = String(Math.floor(t / 60)).padStart(2, '0')
+      const mm = String(t % 60).padStart(2, '0')
+      bars.push({
+        ts: `${day}T${hh}:${mm}:00`,
+        o: round2(o),
+        h: round2(Math.max(o, px) + rand() * (step ? 9 : 60)),
+        l: round2(Math.min(o, px) - rand() * (step ? 9 : 60)),
+        c: round2(px),
+        v: Math.floor(400_000 + rand() * 1_900_000),
+      })
+    }
+  }
+  return bars
+}
+
+/** Chart backend: mirrors session_chart() in the real service. */
+const mockSessionChart = (res, q, symbol, admin) => {
+  const resolution = q.get('resolution') || '15'
+  const date = q.get('date')
+  const from = q.get('date_from')
+  const to = q.get('date_to')
+  let start, end
+  const snapDown = (day) => {
+    const d = new Date(`${day}T00:00:00Z`)
+    while ([0, 6].includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() - 1)
+    return d.toISOString().slice(0, 10)
+  }
+  if (date) {
+    if (date < FIRST_STORED) return json(res, { detail: `No candles stored on or before ${date}` }, 404)
+    start = end = snapDown(date > LAST_STORED ? LAST_STORED : date)
+  } else {
+    if (from && from > LAST_STORED)
+      return json(res, { detail: `Range starts after the last stored session (${LAST_STORED})` }, 404)
+    end = snapDown(!to || to > LAST_STORED ? LAST_STORED : to)
+    start = !from ? end : from < FIRST_STORED ? FIRST_STORED : snapDown(from)
+    if (start > end) return json(res, { detail: `No candles stored between ${from} and ${to}` }, 404)
+  }
+  const days = businessDays(start, end)
+  if (!days.length) return json(res, { detail: 'No candles stored for this window' }, 404)
+  end = days[days.length - 1]
+  start = days[0]
+
+  const side = (label) => (label.startsWith('R') ? 'R' : label.startsWith('S') ? 'S' : 'AT')
+  const rows = db.dashboard.zones.rows.map((z) => ({ ...z, side: side(z.label) }))
+  const rand = prng(fnv1a(`results:${end}`))
+  const level = (z) =>
+    Object.assign(
+      { label: z.label, lo: z.lo, hi: z.hi, key: z.key, key_name: z.key_name, side: z.side },
+      admin ? { stars: z.stars } : {},
+    )
+  const resultsFor = ['HELD', 'TOUCHED', 'BROKE', 'NOT REACHED', 'TOUCHED', 'NOT REACHED']
+  return json(res, {
+    symbol,
+    resolution,
+    mode: start === end ? 'day' : 'range',
+    date: end,
+    date_from: start,
+    date_to: end,
+    first_date: FIRST_STORED,
+    last_date: LAST_STORED,
+    basis: db.dashboard.zones.basis,
+    day_type: db.dashboard.zones.day_type,
+    levels: rows.map((z) => ({ ...level(z), result: resultsFor[Math.floor(rand() * resultsFor.length)] })),
+    next_levels: end === LAST_STORED ? rows.map(level) : [],
+    candles: mockCandles(days, resolution, end),
+    truncated: false,
+  })
+}
+
 export default function mockApi() {
   if (!process.env.ZONEAPP_MOCK) return { name: 'zoneapp-mock-api-disabled' }
   let loggedIn = false
@@ -79,6 +189,8 @@ export default function mockApi() {
         }
         if (path === '/api/stats/days') return json(res, db.stats_days)
         if (path === '/api/sessions') return json(res, db.sessions)
+        if (path === '/api/chart/session')
+          return mockSessionChart(res, url.searchParams, url.searchParams.get('symbol') || db.dashboard.symbol, admin)
         if (path === '/api/data-status')
           return json(res, { connected: true, status: 'valid', broker: 'Main Fyers account',
                              message: 'Market data is live until 21 Aug, 06:30 PM IST.' })

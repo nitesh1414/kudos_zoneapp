@@ -50,6 +50,7 @@ export const endpoints = {
   zoneStats: '/api/stats/zones',
   dayStats: '/api/stats/days',
   sessions: (limit = 30) => `/api/sessions?limit=${limit}`,
+  chartSession: '/api/chart/session',
   myBroker: '/api/my/broker',
   clients: '/api/admin/clients',
   client: (id) => `/api/admin/clients/${id}`,
