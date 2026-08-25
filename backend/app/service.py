@@ -16,7 +16,7 @@ A NOTE ON THE NUMBERS THIS RETURNS
 """
 import hashlib
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 
@@ -453,6 +453,21 @@ def match_check(store, symbol: str, target_date: str = None, p: ZoneParams = Non
     )
 
 
+def _next_trading_day(store, day: str) -> str:
+    """Best-effort next session after `day`: skip weekends and stored holidays."""
+    d = datetime.strptime(day, '%Y-%m-%d').date() + timedelta(days=1)
+    try:
+        frame = store.q("SELECT holiday_date FROM market_holidays "
+                        "WHERE holiday_date > ? AND holiday_date <= ?",
+                        [day, str(d + timedelta(days=45))])
+        holidays = {str(x)[:10] for x in frame['holiday_date']} if not frame.empty else set()
+    except Exception:
+        holidays = set()
+    while d.weekday() >= 5 or d.isoformat() in holidays:
+        d += timedelta(days=1)
+    return d.isoformat()
+
+
 def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
                   date_from: str = None, date_to: str = None, resolution: str = '15'):
     """Candles + zone levels for the TradingView-style chart on the Overview tab.
@@ -517,6 +532,15 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
     if idx > 0:
         basis = daily.iloc[idx - 1]
         sheet = build_sheet(str(basis.d), float(basis.h), float(basis.l), float(basis.c), p)
+        if not outcomes:
+            # Candles are stored but the market-close job has not scored this
+            # session yet (e.g. right after the close). Derive the result from
+            # the stored 15-minute bars so the chart still shows it.
+            bars_15m = store.bars_for_day(symbol, end, '15')
+            if not bars_15m.empty:
+                recs = evaluate_session(bars_15m.rename(columns=str).to_dict('records'),
+                                        _sheet_zones(sheet), p)
+                outcomes = {r['label']: r for r in recs}
         day_type = sheet.day_type
         basis_meta = dict(date=str(basis.d), high=float(basis.h), low=float(basis.l), close=float(basis.c))
         for z in _sheet_zones(sheet):
@@ -529,6 +553,7 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
     # The next session's sheet exists only past the last stored day; it is the
     # actionable overlay whenever the viewport ends there.
     next_levels = []
+    next_session_date = None
     if end == last_date:
         last = daily.iloc[-1]
         fwd = build_sheet(last_date, float(last.h), float(last.l), float(last.c), p)
@@ -536,6 +561,7 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
             next_levels.append(dict(label=z.label, lo=z.lo, hi=z.hi, key=z.key,
                                     key_name=z.key_name, side=_zone_side(z.label)))
         next_levels.sort(key=lambda r: -r['key'])
+        next_session_date = _next_trading_day(store, end)
 
     bars = store.bars_range(symbol, start, end, resolution)
     from .db import records
@@ -546,6 +572,7 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
                 first_date=first_date, last_date=last_date,
                 basis=basis_meta, day_type=day_type,
                 levels=levels, next_levels=next_levels,
+                next_session_date=next_session_date,
                 candles=candles, truncated=len(candles) >= 5000)
 
 

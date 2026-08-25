@@ -33,7 +33,7 @@ function levelColor(level, next) {
   return SIDE_COLORS[level.side] || '#94a3b8'
 }
 
-function drawLevel(series, level, next = false) {
+function drawLevel(series, level, next = false, tag = 'next') {
   const color = levelColor(level, next)
   const edge = `${color}45` // faint band edges — the pair reads as the zone
   series.createPriceLine({ price: level.lo, color: edge, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: false, title: '' })
@@ -44,7 +44,7 @@ function drawLevel(series, level, next = false) {
     lineWidth: 2,
     lineStyle: next ? LineStyle.Dashed : LineStyle.Solid,
     axisLabelVisible: true,
-    title: next ? `${level.label} · next` : level.result ? `${level.label} · ${level.result}` : level.label,
+    title: next ? `${level.label} · ${tag}` : level.result ? `${level.label} · ${level.result}` : level.label,
   })
 }
 
@@ -135,7 +135,8 @@ function ChartCanvas({ data }) {
         title: 'PDC',
       })
     ;(data.levels || []).forEach((l) => drawLevel(candles, l, false))
-    ;(data.next_levels || []).forEach((l) => drawLevel(candles, l, true))
+    const nextTag = shortDate(data.next_session_date) || 'next'
+    ;(data.next_levels || []).forEach((l) => drawLevel(candles, l, true, nextTag))
 
     chart.timeScale().fitContent()
 
@@ -196,6 +197,13 @@ const LEGEND_ROWS = [
   ['BROKE', 'Broke'],
   ['NOT REACHED', 'Not reached'],
 ]
+
+/** '26 Aug' short label for an ISO date — used on next-session level lines. */
+const shortDate = (day) => {
+  if (!day) return ''
+  const d = new Date(`${String(day).slice(0, 10)}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+}
 
 export default function SessionChart() {
   const { symbol } = useSymbol()
@@ -309,7 +317,9 @@ export default function SessionChart() {
               {data.mode === 'day' ? fmtDate(data.date) : `${fmtDate(data.date_from)} → ${fmtDate(data.date_to)}`}
             </Badge>
             {data.day_type && <Badge tone="neutral">{data.day_type} CPR</Badge>}
-            {data.next_levels?.length > 0 && <Badge tone="brand">Next-session levels</Badge>}
+            {data.next_levels?.length > 0 && (
+              <Badge tone="brand">Levels for {shortDate(data.next_session_date) || 'next session'}</Badge>
+            )}
             {data.truncated && <Badge tone="warn">Window capped (max 62 sessions)</Badge>}
           </div>
         )}
@@ -345,7 +355,7 @@ export default function SessionChart() {
                   className="inline-block h-0.5 w-5 rounded-full"
                   style={{ background: `repeating-linear-gradient(90deg, ${NEXT_COLOR} 0 4px, transparent 4px 7px)` }}
                 />
-                Next session
+                Next session ({shortDate(data.next_session_date) || 'upcoming'})
               </span>
             )}
             <span className="inline-flex items-center gap-1.5">
