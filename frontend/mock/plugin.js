@@ -46,6 +46,7 @@ const prng = (a) => () => {
 
 const FIRST_STORED = '2024-03-04'
 const istToday = () => new Date(Date.now() + (330 + new Date().getTimezoneOffset()) * 60000).toISOString().slice(0, 10)
+const istNow = () => new Date(Date.now() + (330 + new Date().getTimezoneOffset()) * 60000)
 const addDays = (day, n) => {
   const d = new Date(`${day}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() + n)
@@ -55,8 +56,14 @@ const isWeekend = (day) => [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDa
 const snapDown = (day) => { let d = day; while (isWeekend(d)) d = addDays(d, -1); return d }
 const snapUp = (day) => { let d = day; while (isWeekend(d)) d = addDays(d, 1); return d }
 const nextBizDay = (day) => snapUp(addDays(day, 1))
-// The preview pretends today's (IST) session is completed and stored.
-const LAST_STORED = snapDown(istToday())
+// A weekday session is complete only after the close. Reading the hour here is
+// what makes the preview behave like the real backend during market hours:
+// today is stored (possibly partially) but the last COMPLETE day is yesterday.
+const TODAY = istToday()
+const TODAY_COMPLETE = !isWeekend(TODAY) && Number(istNow().toISOString().slice(11, 13)) >= 16
+const LAST_STORED = snapDown(TODAY)
+const LAST_COMPLETE = TODAY_COMPLETE ? snapDown(TODAY) : snapDown(addDays(TODAY, -1))
+const NEXT_SESSION_DATE = (TODAY_COMPLETE || isWeekend(TODAY)) ? nextBizDay(LAST_COMPLETE) : TODAY
 
 const businessDays = (from, to, max = 62) => {
   const out = []
@@ -196,45 +203,75 @@ const mockSessionChart = (res, q, symbol, admin) => {
   const date = q.get('date')
   const from = q.get('date_from')
   const to = q.get('date_to')
-  let start, end
+  const view = (q.get('view') || 'latest').toLowerCase()
+  const completedDays = businessDays(FIRST_STORED, LAST_COMPLETE, 5000)
+  if (!completedDays.length)
+    return json(res, { detail: 'No completed session available yet; the market has not closed today' }, 404)
+  let levelEnd, candleStart, candleEnd
   if (date) {
     if (date < FIRST_STORED) return json(res, { detail: `No candles stored on or before ${date}` }, 404)
-    start = end = snapDown(date > LAST_STORED ? LAST_STORED : date)
-  } else {
+    levelEnd = candleEnd = snapDown(date > LAST_STORED ? LAST_STORED : date)
+    candleStart = candleEnd
+  } else if (from || to) {
     if (from && from > LAST_STORED)
       return json(res, { detail: `Range starts after the last stored session (${LAST_STORED})` }, 404)
-    end = snapDown(!to || to > LAST_STORED ? LAST_STORED : to)
-    start = !from ? end : from < FIRST_STORED ? FIRST_STORED : snapUp(from)
-    if (start > end) return json(res, { detail: `No candles stored between ${from} and ${to}` }, 404)
+    candleEnd = to && to <= LAST_STORED ? snapDown(to) : LAST_COMPLETE
+    levelEnd = candleEnd
+    candleStart = !from ? candleEnd : from < FIRST_STORED ? FIRST_STORED : snapUp(from)
+    if (candleStart > candleEnd)
+      return json(res, { detail: `No candles stored between ${from} and ${to}` }, 404)
+  } else {
+    // Session quick-picker / default "Latest" view. Never use an incomplete
+    // stored "today" as the completed session — except when the user explicitly
+    // asks for Today and wants to inspect the still-running session.
+    if (view === 'prev') {
+      levelEnd = completedDays[completedDays.length - 2] || LAST_COMPLETE
+      candleEnd = levelEnd
+    } else if (view === 'today' && !TODAY_COMPLETE && !isWeekend(TODAY)) {
+      levelEnd = TODAY
+      candleEnd = TODAY
+    } else {
+      levelEnd = LAST_COMPLETE
+      candleEnd = (!TODAY_COMPLETE && !isWeekend(TODAY)) ? TODAY : LAST_COMPLETE
+    }
+    // TradingView-like window: show the last few sessions together.
+    const recent = businessDays(FIRST_STORED, candleEnd, 5000)
+    candleStart = recent[Math.max(0, recent.length - 3)]
   }
-  const days = businessDays(start, end)
+  const days = businessDays(candleStart, candleEnd)
   if (!days.length) return json(res, { detail: 'No candles stored for this window' }, 404)
-  end = days[days.length - 1]
-  start = days[0]
+  candleEnd = days[days.length - 1]
+  candleStart = days[0]
 
-  // Zones in play for `end` are built from the previous stored session.
-  const basisDay = snapDown(addDays(end, -1))
-  const view = mockZones(basisDay)
+  // Zones in play for `levelEnd` are built from the previous stored session.
+  const basisDay = snapDown(addDays(levelEnd, -1))
+  const sheet = mockZones(basisDay)
   const basis = dayOHLC(basisDay)
-  const rand = prng(fnv1a(`results:${end}`))
+  const rand = prng(fnv1a(`results:${levelEnd}`))
   const RESULTS = ['HELD', 'TOUCHED', 'BROKE', 'NOT REACHED', 'TOUCHED', 'NOT REACHED']
-  const levels = view.zones.map((z) => ({ ...asLevel(z, admin), result: RESULTS[Math.floor(rand() * RESULTS.length)] }))
+  const levels = sheet.zones.map((z) => ({ ...asLevel(z, admin), result: RESULTS[Math.floor(rand() * RESULTS.length)] }))
 
-  const isLatest = end === LAST_STORED
+  const isLatest = levelEnd === LAST_COMPLETE
   return json(res, {
     symbol,
     resolution,
-    mode: start === end ? 'day' : 'range',
-    date: end,
-    date_from: start,
-    date_to: end,
+    mode: candleStart === candleEnd ? 'day' : 'range',
+    date: levelEnd,
+    date_from: candleStart,
+    date_to: candleEnd,
     first_date: FIRST_STORED,
     last_date: LAST_STORED,
     basis: { date: basisDay, high: basis.h, low: basis.l, close: basis.c },
-    day_type: view.dayType,
+    day_type: sheet.dayType,
     levels,
-    next_levels: isLatest ? mockZones(end).zones.map((z) => asLevel(z, admin)) : [],
-    next_session_date: isLatest ? nextBizDay(end) : null,
+    next_levels: isLatest ? mockZones(levelEnd).zones.map((z) => asLevel(z, admin)) : [],
+    next_session_date: isLatest ? NEXT_SESSION_DATE : null,
+    next_session_kind: isLatest ? (NEXT_SESSION_DATE === TODAY ? 'today-open' : 'upcoming') : null,
+    today: TODAY,
+    last_complete_date: LAST_COMPLETE,
+    session_complete: isLatest,
+    view,
+    server_time: istNow().toISOString(),
     candles: days.flatMap((d) => dayBars(d, resolution)),
     truncated: false,
   })

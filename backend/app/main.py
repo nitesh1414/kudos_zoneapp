@@ -600,13 +600,15 @@ def candles(resolution:str="15",limit:int=500,symbol:str|None=None,user=Depends(
 
 @app.get("/api/chart/session")
 def chart_session(date:str|None=None,date_from:str|None=None,date_to:str|None=None,
-                  resolution:str="15",symbol:str|None=None,user=Depends(current_user)):
+                  resolution:str="15",symbol:str|None=None,view:str|None=None,
+                  user=Depends(current_user)):
     """Candles plus the zone levels (and their results) for one session or a
     date range, for the TradingView-style chart on the Overview tab. Default
-    is the last completed session with the next session's levels on top."""
+    is the last completed session with the next possible session's levels on
+    top. `view` accepts latest | today | next | prev for the quick filters."""
     if resolution not in INDIA_CANDLE_RESOLUTIONS: raise HTTPException(400,"Unsupported resolution")
     try:
-        return session_chart(store,resolve_symbol(user,symbol),params(),date,date_from,date_to,resolution)
+        return session_chart(store,resolve_symbol(user,symbol),params(),date,date_from,date_to,resolution,view)
     except ValueError as exc: raise HTTPException(400,str(exc))
     except LookupError as exc: raise HTTPException(404,str(exc))
 

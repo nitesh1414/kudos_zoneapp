@@ -7,7 +7,8 @@ rates. It does **not** place orders or produce trading advice.
 ## What is in this repository
 
 - `backend/app/zones.py` — deterministic pivot/CPR, clustering and outcome maths
-- `backend/app/service.py` — EOD orchestration and historical statistics
+- `backend/app/service.py` — EOD orchestration, completed-session awareness,
+  the session-chart payload and historical statistics
 - `backend/app/db.py` — PostgreSQL schema/access; enables a TimescaleDB
   hypertable when the extension is available
 - `backend/app/brokers/` — provider-independent `BrokerAdapter`, registry, CSV
@@ -128,6 +129,32 @@ npm run build      # writes backend/app/static/ (committed, so plain uvicorn wor
 
 Market data is ingested through broker connections and the market-close job;
 there is no CSV upload in the interface.
+
+### Session chart
+
+The client **Overview** tab includes a TradingView-style intraday session chart
+(`frontend/src/components/SessionChart.jsx`) fed by `GET /api/chart/session`.
+It draws recent 15-minute candles plus the actionable zone levels so a client
+can read the last result and the next possible session in one view without a
+live data stream.
+
+- **Session completeness is market-aware.** A stored day is only treated as a
+  completed session after the 16:00 IST close. If today's market is still
+  running, the chart uses the last completed session for the result and shows
+  today's levels as the next possible session — it does not jump ahead to
+  tomorrow.
+- **Quick filters** (Latest / Today / Next / Prev) mirror TradingView-style
+  session switching. A custom `from`/`to` date filter is also available.
+- **Multi-session candle window.** The default view shows the last few sessions
+  together (for example yesterday and today) rather than a single day, so the
+  price action context is visible.
+- **Slim level lines instead of boxes.** Each zone is drawn as one thin line at
+  its key price. The actionable next-session lines are dashed violet and
+  labelled on the price axis; completed results appear as compact chips under
+  the chart (HELD / TOUCHED / BROKE / NOT REACHED).
+- **Data is fetched on demand.** Opening the page or pressing the chart's
+  **Refresh** button calls the API again for the selected symbol and window;
+  there is no background live stream.
 
 ## Administrator workflow
 
@@ -305,6 +332,12 @@ Friday**. The worker:
 Runs are recorded in `job_runs` and are idempotent per date, broker and symbol.
 The administrator can manually run or force the job from the UI. Add exchange
 holidays to `market_holidays` as part of annual operations.
+
+Because the job runs after close, the **session chart and dashboard panels**
+always treat the last stored day as completed only once 16:00 IST has passed.
+Until then the UI keeps today's incomplete candles out of the "last completed
+session" calculation, so clients see the last complete result and today's
+levels as the next possible session.
 
 All trading decisions use `Asia/Kolkata` through Python `zoneinfo`, PostgreSQL
 absolute timestamps, and `CRON_TZ=Asia/Kolkata`; they do not depend on the
