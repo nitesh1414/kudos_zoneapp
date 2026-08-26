@@ -389,10 +389,13 @@ export default function SessionChart() {
               <Badge tone="brand">
                 {data.mode === 'day' ? fmtDate(data.date) : `${fmtDate(data.date_from)} → ${fmtDate(data.date_to)}`}
               </Badge>
+            ) : quick === 'prev' ? (
+              <Badge tone="brand">Previous · {fmtDate(data.date)}</Badge>
+            ) : isTodayOpenView ? (
+              <Badge tone="warn">Today · market running</Badge>
             ) : (
               <Badge tone="brand">Last completed {shortDate(data.last_complete_date)}</Badge>
             )}
-            {isTodayOpenView && <Badge tone="warn">Today · market running</Badge>}
             {data.day_type && <Badge tone="neutral">{data.day_type} CPR</Badge>}
             {data.next_levels?.length > 0 && (
               <Badge tone={isTodayOpen ? 'warn' : 'brand'}>
