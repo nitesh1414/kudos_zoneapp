@@ -93,7 +93,7 @@ sudo -u postgres psql
 ```
 
 ```sql
-CREATE ROLE zoneapp LOGIN PASSWORD 'pick-a-strong-db-password';
+CREATE ROLE zoneapp LOGIN PASSWORD 'zoneapp';
 CREATE DATABASE zoneapp OWNER zoneapp;
 \q
 ```
@@ -193,7 +193,7 @@ Check it:
 ```bash
 pm2 status                # zoneapp should be "online"
 pm2 logs zoneapp --lines 50
-curl -i http://127.0.0.1:8004/     # expect: 307 redirect to /login
+curl -i http://127.0.0.1:8005/     # expect: 307 redirect to /login
 ```
 
 The first start creates the schema and the administrator account from
@@ -239,7 +239,7 @@ sudo ufw status
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d zoneapp.example.com
+sudo certbot --nginx -d zoneapp.mudrakaar.com
 ```
 
 Then flip cookies to secure and restart:
