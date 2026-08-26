@@ -40,11 +40,11 @@ function drawLevel(series, level, next = false, tag = 'next') {
   const color = levelColor(level, next)
   series.createPriceLine({
     price: level.key,
-    color: next ? `${color}b8` : `${color}82`,
+    color: next ? `${color}b8` : `${color}78`,
     lineWidth: 1,
     lineStyle: next ? LineStyle.Dashed : LineStyle.SparseDotted,
-    axisLabelVisible: true,
-    title: next ? `${level.label} · ${tag}` : level.result ? `${level.label} · ${level.result}` : level.label,
+    axisLabelVisible: next,
+    title: next ? `${level.label} · ${tag}` : '',
   })
 }
 
@@ -141,9 +141,9 @@ function ChartCanvas({ data }) {
         axisLabelVisible: false,
         title: 'PDC',
       })
-    // Keep the candlestick field clean: completed-session outcomes are shown as
-    // compact chips below the chart; only the actionable next/current levels are
-    // drawn on the chart as short dashed markers.
+    // Levels are drawn as thin key-level lines — no wide boxes. Completed
+    // lines stay off the candle field (results are the chips below), while the
+    // actionable next/today levels are shown as dashed markers.
     const isTodayOpenView = data.view === 'today' && data.date === data.today && data.session_complete === false
     const nextTag = shortDate(data.next_session_date) || (isTodayOpenView ? 'today' : 'next')
     if (isTodayOpenView) (data.levels || []).forEach((l) => drawLevel(candles, l, true, 'today'))

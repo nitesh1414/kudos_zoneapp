@@ -207,57 +207,64 @@ const mockSessionChart = (res, q, symbol, admin) => {
   const completedDays = businessDays(FIRST_STORED, LAST_COMPLETE, 5000)
   if (!completedDays.length)
     return json(res, { detail: 'No completed session available yet; the market has not closed today' }, 404)
-  let start, end
+  let levelEnd, candleStart, candleEnd
   if (date) {
     if (date < FIRST_STORED) return json(res, { detail: `No candles stored on or before ${date}` }, 404)
-    start = end = snapDown(date > LAST_STORED ? LAST_STORED : date)
+    levelEnd = candleEnd = snapDown(date > LAST_STORED ? LAST_STORED : date)
+    candleStart = candleEnd
   } else if (from || to) {
     if (from && from > LAST_STORED)
       return json(res, { detail: `Range starts after the last stored session (${LAST_STORED})` }, 404)
-    const endTarget = to && to <= LAST_STORED ? snapDown(to) : LAST_COMPLETE
-    end = endTarget
-    start = !from ? end : from < FIRST_STORED ? FIRST_STORED : snapUp(from)
-    if (start > end) return json(res, { detail: `No candles stored between ${from} and ${to}` }, 404)
+    candleEnd = to && to <= LAST_STORED ? snapDown(to) : LAST_COMPLETE
+    levelEnd = candleEnd
+    candleStart = !from ? candleEnd : from < FIRST_STORED ? FIRST_STORED : snapUp(from)
+    if (candleStart > candleEnd)
+      return json(res, { detail: `No candles stored between ${from} and ${to}` }, 404)
   } else {
     // Session quick-picker / default "Latest" view. Never use an incomplete
     // stored "today" as the completed session — except when the user explicitly
     // asks for Today and wants to inspect the still-running session.
     if (view === 'prev') {
-      end = completedDays[completedDays.length - 2] || LAST_COMPLETE
+      levelEnd = completedDays[completedDays.length - 2] || LAST_COMPLETE
+      candleEnd = levelEnd
     } else if (view === 'today' && !TODAY_COMPLETE && !isWeekend(TODAY)) {
-      end = TODAY
+      levelEnd = TODAY
+      candleEnd = TODAY
     } else {
-      end = LAST_COMPLETE
+      levelEnd = LAST_COMPLETE
+      candleEnd = (!TODAY_COMPLETE && !isWeekend(TODAY)) ? TODAY : LAST_COMPLETE
     }
-    start = end
+    // TradingView-like window: show the last few sessions together.
+    const recent = businessDays(FIRST_STORED, candleEnd, 5000)
+    candleStart = recent[Math.max(0, recent.length - 3)]
   }
-  const days = businessDays(start, end)
+  const days = businessDays(candleStart, candleEnd)
   if (!days.length) return json(res, { detail: 'No candles stored for this window' }, 404)
-  end = days[days.length - 1]
-  start = days[0]
+  candleEnd = days[days.length - 1]
+  candleStart = days[0]
 
-  // Zones in play for `end` are built from the previous stored session.
-  const basisDay = snapDown(addDays(end, -1))
+  // Zones in play for `levelEnd` are built from the previous stored session.
+  const basisDay = snapDown(addDays(levelEnd, -1))
   const sheet = mockZones(basisDay)
   const basis = dayOHLC(basisDay)
-  const rand = prng(fnv1a(`results:${end}`))
+  const rand = prng(fnv1a(`results:${levelEnd}`))
   const RESULTS = ['HELD', 'TOUCHED', 'BROKE', 'NOT REACHED', 'TOUCHED', 'NOT REACHED']
   const levels = sheet.zones.map((z) => ({ ...asLevel(z, admin), result: RESULTS[Math.floor(rand() * RESULTS.length)] }))
 
-  const isLatest = end === LAST_COMPLETE
+  const isLatest = levelEnd === LAST_COMPLETE
   return json(res, {
     symbol,
     resolution,
-    mode: start === end ? 'day' : 'range',
-    date: end,
-    date_from: start,
-    date_to: end,
+    mode: candleStart === candleEnd ? 'day' : 'range',
+    date: levelEnd,
+    date_from: candleStart,
+    date_to: candleEnd,
     first_date: FIRST_STORED,
     last_date: LAST_STORED,
     basis: { date: basisDay, high: basis.h, low: basis.l, close: basis.c },
     day_type: sheet.dayType,
     levels,
-    next_levels: isLatest ? mockZones(end).zones.map((z) => asLevel(z, admin)) : [],
+    next_levels: isLatest ? mockZones(levelEnd).zones.map((z) => asLevel(z, admin)) : [],
     next_session_date: isLatest ? NEXT_SESSION_DATE : null,
     next_session_kind: isLatest ? (NEXT_SESSION_DATE === TODAY ? 'today-open' : 'upcoming') : null,
     today: TODAY,

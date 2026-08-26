@@ -621,6 +621,17 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
             end = last_complete
         start = end
 
+    # Quick views get a TradingView-like multi-session window so the user can
+    # see the last few candles (yesterday + today) together, not just one day.
+    candle_start, candle_end = start, end
+    if not date and not (date_from or date_to) and last_complete and end in days:
+        if view in ('latest', 'next') and not today_complete and today in days:
+            candle_end = today
+        elif view == 'today' and not today_complete and today in days:
+            candle_end = today
+        idx_end = days.index(candle_end)
+        candle_start = days[max(0, idx_end - 2)]
+
     idx = days.index(end)
     basis_meta = None
     day_type = None
@@ -663,12 +674,12 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
         next_levels.sort(key=lambda r: -r['key'])
         next_session_date, next_session_kind = _next_actionable_day(store, last_complete, now)
 
-    bars = store.bars_range(symbol, start, end, resolution)
+    bars = store.bars_range(symbol, candle_start, candle_end, resolution)
     from .db import records
     candles = records(bars)
     return dict(symbol=symbol, resolution=resolution,
-                mode='day' if start == end else 'range',
-                date=end, date_from=start, date_to=end,
+                mode='day' if candle_start == candle_end else 'range',
+                date=end, date_from=candle_start, date_to=candle_end,
                 first_date=first_date, last_date=last_date,
                 basis=basis_meta, day_type=day_type,
                 levels=levels, next_levels=next_levels,
