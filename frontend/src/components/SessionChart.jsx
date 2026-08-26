@@ -294,7 +294,7 @@ export default function SessionChart() {
     if (l.result) results[l.result] = (results[l.result] || 0) + 1
   })
   const hasResults = (data?.levels || []).some((l) => l.result)
-  const isTodayOpen = data?.next_session_kind === 'today-open'
+  const isTodayOpen = ['today-open', 'today-closed'].includes(data?.next_session_kind)
   const isTodayOpenView = data?.view === 'today' && data?.date === data?.today && data?.session_complete === false
   const title = range
     ? `Session chart · ${fmtDate(range.to || range.from)}`
@@ -306,7 +306,7 @@ export default function SessionChart() {
   const subtitle = data
     ? isTodayOpenView
       ? `Today ${shortDate(data.today)} · market running · zones from ${shortDate(data.last_complete_date)} close, no result yet`
-      : `Result ${fmtDate(data.date)}${data.last_complete_date ? ` · last completed ${shortDate(data.last_complete_date)}` : ''}${data.next_session_date ? ` · next possible ${shortDate(data.next_session_date)}${isTodayOpen ? ' (today, market not closed yet)' : ''}` : ''}`
+      : `Result ${fmtDate(data.date)}${data.last_complete_date ? ` · last completed ${shortDate(data.last_complete_date)}` : ''}${data.next_session_date ? ` · next possible ${shortDate(data.next_session_date)}${isTodayOpen ? ` (today${data.next_session_kind === 'today-open' ? ', market not closed yet' : ', awaiting close data'})` : ''}` : ''}`
     : '15-minute candles with compact session levels. Dashed violet lines = the next possible session; results are shown as chips below the chart.'
 
   return (
@@ -399,7 +399,10 @@ export default function SessionChart() {
             {data.day_type && <Badge tone="neutral">{data.day_type} CPR</Badge>}
             {data.next_levels?.length > 0 && (
               <Badge tone={isTodayOpen ? 'warn' : 'brand'}>
-                {isTodayOpen ? 'Today · market not closed' : 'Next'} {shortDate(data.next_session_date)}
+                {isTodayOpen
+                  ? `Today · ${data.next_session_kind === 'today-open' ? 'market not closed' : 'awaiting close'}`
+                  : 'Next'}{' '}
+                {shortDate(data.next_session_date)}
               </Badge>
             )}
             {data.truncated && <Badge tone="warn">Window capped (max 62 sessions)</Badge>}

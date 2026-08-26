@@ -74,16 +74,19 @@ def _next_actionable_day(store, last_complete, now=None):
     """The next session the user can actually act on.
 
     If today's session is running (market open / not yet closed) and it is a
-    trading day, the next possible session is today. After the close it is the
-    next trading day after the completed session.
+    trading day, the next possible session is today. If today has closed but its
+    data is not ingested yet, today is still the actionable sheet (built from the
+    last complete close). After today is confirmed complete it moves to the next
+    trading day.
     """
     now = _now_ist(now)
     today = now.date()
     last = datetime.strptime(str(last_complete)[:10], '%Y-%m-%d').date()
-    if last <= today and now.hour < 16 and _is_market_day(store, today):
-        return today.isoformat(), 'today-open'
-    base = today if now.hour >= 16 and last <= today else last
-    return _next_trading_day(store, base.isoformat()), 'upcoming'
+    if last < today and _is_market_day(store, today):
+        return today.isoformat(), 'today-open' if now.hour < 16 else 'today-closed'
+    if last == today and now.hour >= 16:
+        return _next_trading_day(store, today.isoformat()), 'upcoming'
+    return _next_trading_day(store, last.isoformat()), 'upcoming'
 
 
 def _open_position(open_px, sheet):
