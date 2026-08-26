@@ -541,8 +541,9 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
     completed session — so the chart does not jump ahead to tomorrow.
 
     Quick views:
-      latest / today / next  → last completed result + the actionable next sheet
-      prev                   → the previous completed session's result
+      latest / next  → last completed result + the actionable next sheet
+      today          → today's session (running bars before close, result after)
+      prev           → the previous completed session's result
     """
     p = p or ZoneParams()
     now = _now_ist()
