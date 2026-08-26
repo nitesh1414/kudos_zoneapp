@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarRange, CandlestickChart, Expand, Minimize2, RotateCcw } from 'lucide-react'
+import { CalendarRange, CandlestickChart, Expand, Minimize2, RefreshCw, RotateCcw } from 'lucide-react'
 import { ColorType, CrosshairMode, LineStyle, TickMarkType, createChart } from 'lightweight-charts'
 import { useApi, fmtDate, fmtNum } from '../lib/hooks.js'
 import { endpoints } from '../lib/api.js'
@@ -14,9 +14,9 @@ const DOWN = '#f43f5e'
 const RESULT_COLORS = { HELD: UP, BROKE: DOWN, TOUCHED: '#f59e0b', 'NOT REACHED': '#64748b' }
 const SIDE_COLORS = { R: '#fb7185', S: '#34d399', AT: '#fbbf24' }
 const NEXT_COLOR = '#818cf8' // next session's forward sheet: brand violet, dashed
-const GRID = 'rgba(148, 163, 184, 0.07)'
+const GRID = 'rgba(148, 163, 184, 0.06)'
 const AXIS_BORDER = 'rgba(148, 163, 184, 0.16)'
-const AXIS_TEXT = '#7b87a1'
+const AXIS_TEXT = '#8b96ad'
 
 /** Candle times are stored as Asia/Kolkata wall clock without a zone suffix.
  * Lightweight-charts renders timestamps as UTC, so feeding the wall clock in
@@ -33,16 +33,16 @@ function levelColor(level, next) {
   return SIDE_COLORS[level.side] || '#94a3b8'
 }
 
+/** Draw one compact, dotted price level. Full-width lines were cluttering the
+ * chart, so we drop the edge lines and keep a single sparse dashed level
+ * that reads as a tick/level marker, with the label on the right axis. */
 function drawLevel(series, level, next = false, tag = 'next') {
   const color = levelColor(level, next)
-  const edge = `${color}45` // faint band edges — the pair reads as the zone
-  series.createPriceLine({ price: level.lo, color: edge, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: false, title: '' })
-  series.createPriceLine({ price: level.hi, color: edge, lineWidth: 1, lineStyle: LineStyle.Solid, axisLabelVisible: false, title: '' })
   series.createPriceLine({
     price: level.key,
-    color,
-    lineWidth: 2,
-    lineStyle: next ? LineStyle.Dashed : LineStyle.Solid,
+    color: next ? `${color}b8` : `${color}82`,
+    lineWidth: 1,
+    lineStyle: next ? LineStyle.Dashed : LineStyle.SparseDotted,
     axisLabelVisible: true,
     title: next ? `${level.label} · ${tag}` : level.result ? `${level.label} · ${level.result}` : level.label,
   })
@@ -73,11 +73,17 @@ function ChartCanvas({ data }) {
       },
       grid: { vertLines: { color: GRID }, horzLines: { color: GRID } },
       crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: AXIS_BORDER },
+      rightPriceScale: {
+        borderColor: AXIS_BORDER,
+        scaleMargins: { top: 0.05, bottom: 0.18 },
+        entireTextOnly: true,
+      },
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
         borderColor: AXIS_BORDER,
+        barSpacing: 7,
+        rightOffset: 3,
         tickMarkFormatter: (time, type) => {
           const d = new Date(time * 1000)
           if (type <= TickMarkType.DayOfMonth)
@@ -93,22 +99,23 @@ function ChartCanvas({ data }) {
           const hm = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })
           return `${day} · ${hm}`
         },
+        priceFormatter: (price) => Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       },
     })
 
     const candles = chart.addCandlestickSeries({
       upColor: UP,
-      wickUpColor: 'rgba(34, 197, 94, 0.85)',
+      wickUpColor: 'rgba(34, 197, 94, 0.8)',
       downColor: DOWN,
-      wickDownColor: 'rgba(244, 63, 94, 0.85)',
+      wickDownColor: 'rgba(244, 63, 94, 0.8)',
       borderVisible: false,
       priceLineVisible: false,
+      priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
     })
     const bars = data.candles.map((c) => ({
       time: fakeUtc(c.ts), open: +c.o, high: +c.h, low: +c.l, close: +c.c,
     }))
     candles.setData(bars)
-    chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.06, bottom: 0.24 } })
 
     const volume = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
@@ -120,22 +127,26 @@ function ChartCanvas({ data }) {
       data.candles.map((c) => ({
         time: fakeUtc(c.ts),
         value: Number(c.v) || 0,
-        color: +c.c >= +c.o ? 'rgba(34, 197, 94, 0.30)' : 'rgba(244, 63, 94, 0.30)',
+        color: +c.c >= +c.o ? 'rgba(34, 197, 94, 0.28)' : 'rgba(244, 63, 94, 0.28)',
       })),
     )
-    chart.priceScale('').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+    chart.priceScale('').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } })
 
     if (data.basis?.close)
       candles.createPriceLine({
         price: +data.basis.close,
         color: '#64748b',
         lineWidth: 1,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: false,
         title: 'PDC',
       })
-    ;(data.levels || []).forEach((l) => drawLevel(candles, l, false))
-    const nextTag = shortDate(data.next_session_date) || 'next'
+    // Keep the candlestick field clean: completed-session outcomes are shown as
+    // compact chips below the chart; only the actionable next/current levels are
+    // drawn on the chart as short dashed markers.
+    const isTodayOpenView = data.view === 'today' && data.date === data.today && data.session_complete === false
+    const nextTag = shortDate(data.next_session_date) || (isTodayOpenView ? 'today' : 'next')
+    if (isTodayOpenView) (data.levels || []).forEach((l) => drawLevel(candles, l, true, 'today'))
     ;(data.next_levels || []).forEach((l) => drawLevel(candles, l, true, nextTag))
 
     chart.timeScale().fitContent()
@@ -177,7 +188,7 @@ function ChartCanvas({ data }) {
   }, [data])
 
   return (
-    <div className="relative h-full min-h-[220px]">
+    <div className="relative h-full min-h-[240px]">
       <div ref={host} className="absolute inset-0" />
       <div className="num pointer-events-none absolute top-1.5 left-2 z-10 flex flex-wrap items-center gap-x-2.5 rounded-lg bg-ink-950/60 px-2 py-1 text-[10.5px] text-slate-400 ring-1 ring-white/8 backdrop-blur-sm">
         <span ref={legendDate} className="text-slate-500" />
@@ -198,6 +209,13 @@ const LEGEND_ROWS = [
   ['NOT REACHED', 'Not reached'],
 ]
 
+const QUICK = [
+  ['latest', 'Latest'],
+  ['today', 'Today'],
+  ['next', 'Next'],
+  ['prev', 'Prev'],
+]
+
 /** '26 Aug' short label for an ISO date — used on next-session level lines. */
 const shortDate = (day) => {
   if (!day) return ''
@@ -205,17 +223,32 @@ const shortDate = (day) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 }
 
+function ZoneChip({ level, next = false }) {
+  const color = levelColor(level, next)
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-lg bg-ink-900/70 px-2 py-1 ring-1 ring-white/8">
+      <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+      <span className="num text-[10.5px] font-semibold text-slate-200">{level.label}</span>
+      <span className="num text-[10.5px] text-slate-400">{fmtNum(level.key, 2)}</span>
+      {level.result && <span style={{ color }} className="num text-[10px] font-semibold">{level.result}</span>}
+    </span>
+  )
+}
+
 export default function SessionChart() {
   const { symbol } = useSymbol()
   const [pending, setPending] = useState({ from: '', to: '' })
-  const [range, setRange] = useState(null) // applied {from,to}; null = default view
+  const [range, setRange] = useState(null) // applied {from,to}; null = quick view
+  const [quick, setQuick] = useState('latest')
   const [full, setFull] = useState(false)
 
   const query = useMemo(() => {
-    if (!range) return ''
-    if (!range.from || range.from === range.to) return `date=${range.to || range.from}`
-    return `date_from=${range.from}&date_to=${range.to}`
-  }, [range])
+    if (range) {
+      if (!range.from || range.from === range.to) return `date=${range.to || range.from}`
+      return `date_from=${range.from}&date_to=${range.to}`
+    }
+    return quick && quick !== 'latest' ? `view=${quick}` : ''
+  }, [range, quick])
 
   const { data, error, loading, reload } = useApi(
     () => withSymbol(query ? `${endpoints.chartSession}?${query}` : endpoints.chartSession, symbol),
@@ -241,11 +274,19 @@ export default function SessionChart() {
     if (!to) to = from
     if (from > to) [from, to] = [to, from]
     setRange({ from, to })
+    setQuick('latest')
   }
 
   const reset = () => {
     setPending({ from: '', to: '' })
     setRange(null)
+    setQuick('latest')
+  }
+
+  const applyQuick = (key) => {
+    setQuick(key)
+    setRange(null)
+    setPending({ from: '', to: '' })
   }
 
   const results = {}
@@ -253,32 +294,63 @@ export default function SessionChart() {
     if (l.result) results[l.result] = (results[l.result] || 0) + 1
   })
   const hasResults = (data?.levels || []).some((l) => l.result)
+  const isTodayOpen = data?.next_session_kind === 'today-open'
+  const isTodayOpenView = data?.view === 'today' && data?.date === data?.today && data?.session_complete === false
   const title = range
     ? `Session chart · ${fmtDate(range.to || range.from)}`
+    : quick === 'today' ? 'Session chart · Today'
+    : quick === 'next' ? 'Session chart · Next possible session'
+    : quick === 'prev' ? 'Session chart · Previous session'
     : 'Session chart'
+
+  const subtitle = data
+    ? isTodayOpenView
+      ? `Today ${shortDate(data.today)} · market running · zones from ${shortDate(data.last_complete_date)} close, no result yet`
+      : `Result ${fmtDate(data.date)}${data.last_complete_date ? ` · last completed ${shortDate(data.last_complete_date)}` : ''}${data.next_session_date ? ` · next possible ${shortDate(data.next_session_date)}${isTodayOpen ? ' (today, market not closed yet)' : ''}` : ''}`
+    : '15-minute candles with compact session levels. Dashed violet lines = the next possible session; results are shown as chips below the chart.'
 
   return (
     <Card
       title={title}
       icon={CandlestickChart}
-      subtitle="15-minute candles with the session zones drawn as levels. Solid lines are that session's zones (colour = result), dashed violet = next session's levels."
+      subtitle={subtitle}
       className={full ? 'fixed inset-0 z-[70] flex flex-col overflow-hidden' : ''}
       bodyClass={full ? 'flex min-h-0 flex-1 flex-col overflow-y-auto' : ''}
       style={full ? { borderRadius: 0 } : undefined}
       right={
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={full ? Minimize2 : Expand}
-          onClick={() => setFull((v) => !v)}
-          title={full ? 'Exit full screen (Esc)' : 'Full screen'}
-          aria-label={full ? 'Exit full screen' : 'Full screen'}
-        >
-          <span className="hidden sm:inline">{full ? 'Exit' : 'Full screen'}</span>
-        </Button>
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" icon={RefreshCw} onClick={reload} title="Fetch the latest data now">
+            <span className="hidden sm:inline">Refresh</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={full ? Minimize2 : Expand}
+            onClick={() => setFull((v) => !v)}
+            title={full ? 'Exit full screen (Esc)' : 'Full screen'}
+            aria-label={full ? 'Exit full screen' : 'Full screen'}
+          >
+            <span className="hidden sm:inline">{full ? 'Exit' : 'Full screen'}</span>
+          </Button>
+        </div>
       }
     >
       <form onSubmit={apply} className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-0.5 rounded-xl bg-ink-900/60 p-1 ring-1 ring-white/10">
+          {QUICK.map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => applyQuick(key)}
+              className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition active:scale-[.98] ${
+                !range && quick === key ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25' : 'text-slate-400 hover:bg-white/10 hover:text-slate-100'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="hidden h-5 w-px bg-white/10 sm:block" />
         <CalendarRange size={15} className="text-slate-500" />
         <div className="w-36 sm:w-40">
           <Input
@@ -306,26 +378,33 @@ export default function SessionChart() {
         <Button type="submit" size="sm" variant="ghost">
           Apply
         </Button>
-        {range && (
+        {(range || quick !== 'latest') && (
           <Button type="button" variant="subtle" size="sm" icon={RotateCcw} onClick={reset}>
             Reset
           </Button>
         )}
         {data && (
           <div className="ml-auto flex flex-wrap items-center gap-1.5 text-[11px]">
-            <Badge tone="brand">
-              {data.mode === 'day' ? fmtDate(data.date) : `${fmtDate(data.date_from)} → ${fmtDate(data.date_to)}`}
-            </Badge>
+            {range ? (
+              <Badge tone="brand">
+                {data.mode === 'day' ? fmtDate(data.date) : `${fmtDate(data.date_from)} → ${fmtDate(data.date_to)}`}
+              </Badge>
+            ) : (
+              <Badge tone="brand">Last completed {shortDate(data.last_complete_date)}</Badge>
+            )}
+            {isTodayOpenView && <Badge tone="warn">Today · market running</Badge>}
             {data.day_type && <Badge tone="neutral">{data.day_type} CPR</Badge>}
             {data.next_levels?.length > 0 && (
-              <Badge tone="brand">Levels for {shortDate(data.next_session_date) || 'next session'}</Badge>
+              <Badge tone={isTodayOpen ? 'warn' : 'brand'}>
+                {isTodayOpen ? 'Today · market not closed' : 'Next'} {shortDate(data.next_session_date)}
+              </Badge>
             )}
             {data.truncated && <Badge tone="warn">Window capped (max 62 sessions)</Badge>}
           </div>
         )}
       </form>
 
-      {loading && <Skeleton className="h-[420px] rounded-2xl" />}
+      {loading && <Skeleton className="h-[460px] rounded-2xl" />}
       {error && <ErrorState error={error} onRetry={reload} />}
       {data && data.candles.length === 0 && (
         <Empty
@@ -337,9 +416,15 @@ export default function SessionChart() {
 
       {data && data.candles.length > 0 && (
         <>
-          <div className={full ? 'min-h-0 flex-1' : 'h-[420px]'}>
-            <ChartCanvas key={`${symbol}:${data.date_from}:${data.date_to}:${data.resolution}`} data={data} />
+          <div className={full ? 'min-h-0 flex-1' : 'h-[460px]'}>
+            <ChartCanvas key={`${symbol}:${data.date_from}:${data.date_to}:${data.resolution}:${data.view}`} data={data} />
           </div>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+            {(data.levels || []).map((l) => <ZoneChip key={`r-${l.label}`} level={l} />)}
+            {(data.next_levels || []).map((l) => <ZoneChip key={`n-${l.label}`} level={l} next />)}
+          </div>
+
           <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-white/5 pt-2.5 text-[11px] text-slate-500">
             {hasResults &&
               LEGEND_ROWS.filter(([k]) => results[k]).map(([k, label]) => (
@@ -355,7 +440,7 @@ export default function SessionChart() {
                   className="inline-block h-0.5 w-5 rounded-full"
                   style={{ background: `repeating-linear-gradient(90deg, ${NEXT_COLOR} 0 4px, transparent 4px 7px)` }}
                 />
-                Next session ({shortDate(data.next_session_date) || 'upcoming'})
+                Next {isTodayOpen ? 'today' : 'session'} ({shortDate(data.next_session_date) || 'upcoming'})
               </span>
             )}
             <span className="inline-flex items-center gap-1.5">

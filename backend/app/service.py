@@ -17,14 +17,73 @@ A NOTE ON THE NUMBERS THIS RETURNS
 import hashlib
 import json
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from .zones import ZoneParams, build_sheet, evaluate_session, classify_day
 
 
+IST = ZoneInfo('Asia/Kolkata')
+
+
 def params_hash(p: ZoneParams) -> str:
     return hashlib.sha1(json.dumps(p.__dict__, sort_keys=True).encode()).hexdigest()[:10]
+
+
+def _now_ist(now=None):
+    now = now or datetime.now(IST)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=IST)
+    return now.astimezone(IST)
+
+
+def _is_market_day(store, day):
+    """Weekday that is not in the manually/automatically maintained holiday table."""
+    if day.weekday() >= 5:
+        return False
+    try:
+        return store.one('SELECT 1 FROM market_holidays WHERE holiday_date=?', [day]) is None
+    except Exception:
+        return True
+
+
+def _completed_days(store, symbol, now=None):
+    """Stored sessions that are actually complete.
+
+    A session is complete once the market close has passed. The last stored day
+    can contain intraday bars while the session is still running; showing it as
+    a completed session makes the next-session sheet jump one day too far ahead
+    (e.g. showing tomorrow's levels when today's market has not closed yet).
+    """
+    daily = store.daily(symbol)
+    if daily.empty:
+        return daily
+    now = _now_ist(now)
+    today = now.date().isoformat()
+    ds = daily['d'].astype(str).str[:10]
+    return daily[(ds < today) | ((ds == today) & (now.hour >= 16))].reset_index(drop=True)
+
+
+def _last_completed_row(store, symbol, now=None):
+    df = _completed_days(store, symbol, now)
+    return None if df.empty else df.iloc[-1]
+
+
+def _next_actionable_day(store, last_complete, now=None):
+    """The next session the user can actually act on.
+
+    If today's session is running (market open / not yet closed) and it is a
+    trading day, the next possible session is today. After the close it is the
+    next trading day after the completed session.
+    """
+    now = _now_ist(now)
+    today = now.date()
+    last = datetime.strptime(str(last_complete)[:10], '%Y-%m-%d').date()
+    if last <= today and now.hour < 16 and _is_market_day(store, today):
+        return today.isoformat(), 'today-open'
+    base = today if now.hour >= 16 and last <= today else last
+    return _next_trading_day(store, base.isoformat()), 'upcoming'
 
 
 def _open_position(open_px, sheet):
@@ -40,7 +99,7 @@ def _open_position(open_px, sheet):
 def next_session_sheet(store, symbol: str, p: ZoneParams = None):
     """Zones for the session after the last COMPLETE one in the database."""
     p = p or ZoneParams()
-    basis = store.last_complete_day(symbol)
+    basis = _last_completed_row(store, symbol)
     if basis is None:
         return None
     return build_sheet(str(basis.d), float(basis.h), float(basis.l), float(basis.c), p)
@@ -329,7 +388,10 @@ def session_recap(store, symbol: str, target_date: str = None, p: ZoneParams = N
     daily['d'] = daily['d'].astype(str)
 
     if target_date is None:
-        target_date = str(daily.iloc[-1]['d'])
+        completed = _completed_days(store, symbol)
+        if completed.empty:
+            return None
+        target_date = str(completed.iloc[-1]['d'])
 
     target_idx = daily.index[daily['d'] == str(target_date)]
     if len(target_idx) == 0:
@@ -469,20 +531,35 @@ def _next_trading_day(store, day: str) -> str:
 
 
 def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
-                  date_from: str = None, date_to: str = None, resolution: str = '15'):
+                  date_from: str = None, date_to: str = None, resolution: str = '15',
+                  view: str = None):
     """Candles + zone levels for the TradingView-style chart on the Overview tab.
 
-    Default view: the last completed session, its zones with their outcomes,
-    and the forward-looking (next session) sheet. A single `date` shows that
-    stored session; a `date_from`/`date_to` range shows every stored candle in
-    the window with the levels (and result) of its last session.
+    Default view: the last *completed* session, its zones with their outcomes,
+    and the forward-looking sheet for the next possible session. If today's
+    market has not closed yet, the incomplete day is never treated as the last
+    completed session — so the chart does not jump ahead to tomorrow.
+
+    Quick views:
+      latest / today / next  → last completed result + the actionable next sheet
+      prev                   → the previous completed session's result
     """
     p = p or ZoneParams()
+    now = _now_ist()
+    today = now.date().isoformat()
     daily = store.daily(symbol)
     if daily.empty:
         raise LookupError('No candles stored yet for this symbol')
     days = [str(d) for d in daily['d']]
     first_date, last_date = days[0], days[-1]
+
+    completed = _completed_days(store, symbol, now)
+    completed_days = [str(d) for d in completed['d']] if not completed.empty else []
+    last_complete = completed_days[-1] if completed_days else None
+    today_complete = today in completed_days
+    view = (view or 'latest').lower()
+    if view not in ('latest', 'today', 'next', 'prev'):
+        raise ValueError("view must be one of latest, today, next, prev")
 
     def parse(name, value):
         if value is None:
@@ -510,11 +587,14 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
         start = end = stored_on_or_before(date)
         if end is None:
             raise LookupError(f'No candles stored on or before {date}')
-    else:
+    elif date_from or date_to:
         if date_from and date_from > last_date:
             raise LookupError(f'Range starts after the last stored session ({last_date})')
-        end = stored_on_or_before(date_to or last_date) or last_date
-        # Without an explicit start the view is one session, not the whole history.
+        # The default "until" is the last completed session, never a partially
+        # filled day that is still running (that would add a future sheet).
+        end = stored_on_or_before(date_to) if date_to else last_complete
+        if end is None:
+            end = last_date
         start = (stored_on_or_after(date_from) or first_date) if date_from else end
         if start > end:
             raise LookupError(f'No candles stored between {date_from} and {date_to}')
@@ -523,6 +603,19 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
             # Keep intraday payloads bounded; the chart tells the user when
             # its window was cut short.
             start = days[days.index(end) - 61]
+    else:
+        # Session quick-picker / the default "Latest" view.
+        if last_complete is None:
+            raise LookupError('No completed session available yet; the market has not closed today')
+        if view == 'prev':
+            end = completed_days[-2] if len(completed_days) >= 2 else last_complete
+        elif view == 'today' and not today_complete and today in days:
+            # "Today" while the market is running shows today's real bars plus
+            # today's zones; it never jumps ahead to a future session.
+            end = today
+        else:
+            end = last_complete
+        start = end
 
     idx = days.index(end)
     basis_meta = None
@@ -550,18 +643,21 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
                                result=_zone_result(actual) if actual else None))
         levels.sort(key=lambda r: -r['key'])
 
-    # The next session's sheet exists only past the last stored day; it is the
-    # actionable overlay whenever the viewport ends there.
+    # The next session sheet only makes sense at the actionable frontier: the
+    # last completed session. It is never rendered on a historical/previous view.
+    is_latest_complete = bool(last_complete and end == last_complete)
     next_levels = []
     next_session_date = None
-    if end == last_date:
-        last = daily.iloc[-1]
-        fwd = build_sheet(last_date, float(last.h), float(last.l), float(last.c), p)
+    next_session_kind = None
+    if is_latest_complete:
+        last_idx = days.index(last_complete)
+        last = daily.iloc[last_idx]
+        fwd = build_sheet(last_complete, float(last.h), float(last.l), float(last.c), p)
         for z in _sheet_zones(fwd):
             next_levels.append(dict(label=z.label, lo=z.lo, hi=z.hi, key=z.key,
                                     key_name=z.key_name, side=_zone_side(z.label)))
         next_levels.sort(key=lambda r: -r['key'])
-        next_session_date = _next_trading_day(store, end)
+        next_session_date, next_session_kind = _next_actionable_day(store, last_complete, now)
 
     bars = store.bars_range(symbol, start, end, resolution)
     from .db import records
@@ -573,13 +669,17 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
                 basis=basis_meta, day_type=day_type,
                 levels=levels, next_levels=next_levels,
                 next_session_date=next_session_date,
+                next_session_kind=next_session_kind,
+                today=today, last_complete_date=last_complete,
+                session_complete=is_latest_complete, view=view,
+                server_time=now.isoformat(timespec='seconds'),
                 candles=candles, truncated=len(candles) >= 5000)
 
 
 def dashboard_payload(store, symbol: str, p: ZoneParams = None):
     """All panels surfaced on the client dashboard, in one round-trip."""
     p = p or ZoneParams()
-    basis = store.last_complete_day(symbol)
+    basis = _last_completed_row(store, symbol)
     sheet = next_session_sheet(store, symbol, p)
 
     basis_meta = None
@@ -618,11 +718,8 @@ def dashboard_payload(store, symbol: str, p: ZoneParams = None):
             ))
         zones_panel['rows'] = rows
 
-    daily = store.daily(symbol)
-    if daily.empty:
-        recap_target = None
-    else:
-        recap_target = str(daily.iloc[-1].d)
+    completed = _completed_days(store, symbol)
+    recap_target = None if completed.empty else str(completed.iloc[-1].d)
 
     recap = session_recap(store, symbol, recap_target, p)
     match = match_check(store, symbol, recap_target, p)
