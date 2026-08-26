@@ -30,6 +30,216 @@ const readBody = (req) =>
     })
   })
 
+// ---- deterministic fake candles for the session chart ----------------------
+const round2 = (v) => Math.round(v * 100) / 100
+const fnv1a = (s) => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return h >>> 0
+}
+const prng = (a) => () => {
+  a |= 0; a = (a + 0x6d2b79f5) | 0
+  let t = Math.imul(a ^ (a >>> 15), 1 | a)
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+
+const FIRST_STORED = '2024-03-04'
+const istToday = () => new Date(Date.now() + (330 + new Date().getTimezoneOffset()) * 60000).toISOString().slice(0, 10)
+const addDays = (day, n) => {
+  const d = new Date(`${day}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+const isWeekend = (day) => [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay())
+const snapDown = (day) => { let d = day; while (isWeekend(d)) d = addDays(d, -1); return d }
+const snapUp = (day) => { let d = day; while (isWeekend(d)) d = addDays(d, 1); return d }
+const nextBizDay = (day) => snapUp(addDays(day, 1))
+// The preview pretends today's (IST) session is completed and stored.
+const LAST_STORED = snapDown(istToday())
+
+const businessDays = (from, to, max = 62) => {
+  const out = []
+  let d = snapUp(from)
+  while (d <= to && out.length < max) {
+    if (!isWeekend(d)) out.push(d)
+    d = addDays(d, 1)
+  }
+  return out
+}
+
+/** One session's 15-minute candles, seeded per day so every window shows the
+ * same bars. Closes chain across sessions (a day opens near the previous
+ * business day's close) and ranges stay Nifty-sized, so zones spread into
+ * proper R1–R4 / S1–S4 ladders. NSE session: 09:15 → 15:15 candle starts. */
+const barsCache = new Map()
+const dayBars = (day, resolution = '15') => {
+  if (resolution === 'D') {
+    const b = dayBars(day, '15')
+    return [{
+      ts: b[0].ts, o: b[0].o,
+      h: round2(Math.max(...b.map((x) => x.h))),
+      l: round2(Math.min(...b.map((x) => x.l))),
+      c: b[b.length - 1].c,
+      v: b.reduce((a, x) => a + x.v, 0),
+    }]
+  }
+  const key = `${day}:15`
+  if (barsCache.has(key)) return barsCache.get(key).map((b) => ({ ...b }))
+  const rand = prng(fnv1a(`candles:${day}`))
+  const anchor = day <= FIRST_STORED
+    ? 23800 + (fnv1a(`anchor:${day}`) % 1200)
+    : dayOHLC(snapDown(addDays(day, -1))).c
+  let px = anchor + round2((rand() - 0.5) * 24) // small overnight gap
+  const bars = []
+  for (let t = 9 * 60 + 15; t <= 15 * 60 + 15; t += 15) {
+    const o = px
+    px = round2(px + (rand() - 0.5) * 30)
+    const hh = String(Math.floor(t / 60)).padStart(2, '0')
+    const mm = String(t % 60).padStart(2, '0')
+    bars.push({
+      ts: `${day}T${hh}:${mm}:00`,
+      o: round2(o),
+      h: round2(Math.max(o, px) + rand() * 13),
+      l: round2(Math.min(o, px) - rand() * 13),
+      c: round2(px),
+      v: Math.floor(400_000 + rand() * 1_900_000),
+    })
+  }
+  barsCache.set(key, bars)
+  return bars.map((b) => ({ ...b }))
+}
+
+const dayOHLC = (day) => {
+  const bars = dayBars(day)
+  return {
+    o: bars[0].o,
+    h: Math.max(...bars.map((b) => b.h)),
+    l: Math.min(...bars.map((b) => b.l)),
+    c: bars[bars.length - 1].c,
+  }
+}
+
+/** Pivot-family zones for the session AFTER `basisDay`, mirroring zones.py
+ * (weights and the anchor clustering) in miniature. */
+const W8 = {
+  PP: 1, TC: 0.5, BC: 0.5, PDC: 1, PDH: 0.6, PDL: 0.8,
+  CamR3: 0.6, CamR4: 0.4, CamS3: 1, CamS4: 0.7,
+  FibR1: 0.7, FibR2: 0.4, FibS1: 0.8, FibS2: 0.8, ClaR1: 0.4, ClaS1: 0.8,
+}
+const mockZones = (basisDay) => {
+  const { h: H, l: L, c: C } = dayOHLC(basisDay)
+  const r = H - L
+  const pp = (H + L + C) / 3
+  const bc = (H + L) / 2
+  const tc = 2 * pp - bc
+  const cand = {
+    PP: pp, TC: tc, BC: bc, PDC: C, PDH: H, PDL: L,
+    CamR3: C + (r * 1.1) / 4, CamR4: C + (r * 1.1) / 2,
+    CamS3: C - (r * 1.1) / 4, CamS4: C - (r * 1.1) / 2,
+    FibR1: pp + 0.382 * r, FibR2: pp + 0.618 * r,
+    FibS1: pp - 0.382 * r, FibS2: pp - 0.618 * r,
+    ClaR1: 2 * pp - L, ClaS1: 2 * pp - H,
+  }
+  const items = Object.entries(cand).sort((a, b) => a[1] - b[1])
+  const zones = []
+  let i = 0
+  while (i < items.length) {
+    const [an, av] = items[i]
+    let hi = av
+    let best = av; let bestN = an; let bestW = W8[an] ?? 0.3
+    const members = [an]
+    let j = i + 1
+    while (j < items.length && items[j][1] - av <= 25) {
+      const [nm, v] = items[j]
+      hi = v
+      members.push(nm)
+      if ((W8[nm] ?? 0.3) > bestW) { bestW = W8[nm]; best = v; bestN = nm }
+      j++
+    }
+    const mid = (av + hi) / 2
+    zones.push({
+      lo: round2(Math.min(av, mid - 12)),
+      hi: round2(Math.max(hi, mid + 12)),
+      key: round2(best),
+      key_name: bestN,
+      members: members.join('+'),
+    })
+    i = j
+  }
+  const at = zones.find((z) => z.lo <= C && C <= z.hi) || null
+  const rest = zones.filter((z) => z !== at)
+  const res4 = rest.filter((z) => (z.lo + z.hi) / 2 > C).slice(0, 4)
+  const sup4 = rest.filter((z) => (z.lo + z.hi) / 2 < C).reverse().slice(0, 4)
+  const out = []
+  res4.forEach((z, k) => out.push({ ...z, label: `R${k + 1}`, side: 'R' }))
+  sup4.forEach((z, k) => out.push({ ...z, label: `S${k + 1}`, side: 'S' }))
+  if (at) out.push({ ...at, label: 'AT', side: 'AT' })
+  const cprPct = (100 * Math.abs(tc - bc)) / C
+  return {
+    zones: out.sort((a, b) => b.key - a.key),
+    dayType: cprPct < 0.08 ? 'NARROW' : cprPct > 0.26 ? 'WIDE' : 'NORMAL',
+  }
+}
+
+const asLevel = (z, admin) =>
+  Object.assign(
+    { label: z.label, lo: z.lo, hi: z.hi, key: z.key, key_name: z.key_name, side: z.side },
+    admin ? { stars: Math.min(5, 1 + (fnv1a(z.members) % 5)) } : {},
+  )
+
+/** Chart backend: mirrors session_chart() in the real service. The viewed
+ * session's levels come from the previous business day's OHLC; the next
+ * session's levels come from the viewed day's OHLC — two distinct line sets. */
+const mockSessionChart = (res, q, symbol, admin) => {
+  const resolution = q.get('resolution') || '15'
+  const date = q.get('date')
+  const from = q.get('date_from')
+  const to = q.get('date_to')
+  let start, end
+  if (date) {
+    if (date < FIRST_STORED) return json(res, { detail: `No candles stored on or before ${date}` }, 404)
+    start = end = snapDown(date > LAST_STORED ? LAST_STORED : date)
+  } else {
+    if (from && from > LAST_STORED)
+      return json(res, { detail: `Range starts after the last stored session (${LAST_STORED})` }, 404)
+    end = snapDown(!to || to > LAST_STORED ? LAST_STORED : to)
+    start = !from ? end : from < FIRST_STORED ? FIRST_STORED : snapUp(from)
+    if (start > end) return json(res, { detail: `No candles stored between ${from} and ${to}` }, 404)
+  }
+  const days = businessDays(start, end)
+  if (!days.length) return json(res, { detail: 'No candles stored for this window' }, 404)
+  end = days[days.length - 1]
+  start = days[0]
+
+  // Zones in play for `end` are built from the previous stored session.
+  const basisDay = snapDown(addDays(end, -1))
+  const view = mockZones(basisDay)
+  const basis = dayOHLC(basisDay)
+  const rand = prng(fnv1a(`results:${end}`))
+  const RESULTS = ['HELD', 'TOUCHED', 'BROKE', 'NOT REACHED', 'TOUCHED', 'NOT REACHED']
+  const levels = view.zones.map((z) => ({ ...asLevel(z, admin), result: RESULTS[Math.floor(rand() * RESULTS.length)] }))
+
+  const isLatest = end === LAST_STORED
+  return json(res, {
+    symbol,
+    resolution,
+    mode: start === end ? 'day' : 'range',
+    date: end,
+    date_from: start,
+    date_to: end,
+    first_date: FIRST_STORED,
+    last_date: LAST_STORED,
+    basis: { date: basisDay, high: basis.h, low: basis.l, close: basis.c },
+    day_type: view.dayType,
+    levels,
+    next_levels: isLatest ? mockZones(end).zones.map((z) => asLevel(z, admin)) : [],
+    next_session_date: isLatest ? nextBizDay(end) : null,
+    candles: days.flatMap((d) => dayBars(d, resolution)),
+    truncated: false,
+  })
+}
+
 export default function mockApi() {
   if (!process.env.ZONEAPP_MOCK) return { name: 'zoneapp-mock-api-disabled' }
   let loggedIn = false
@@ -79,6 +289,8 @@ export default function mockApi() {
         }
         if (path === '/api/stats/days') return json(res, db.stats_days)
         if (path === '/api/sessions') return json(res, db.sessions)
+        if (path === '/api/chart/session')
+          return mockSessionChart(res, url.searchParams, url.searchParams.get('symbol') || db.dashboard.symbol, admin)
         if (path === '/api/data-status')
           return json(res, { connected: true, status: 'valid', broker: 'Main Fyers account',
                              message: 'Market data is live until 21 Aug, 06:30 PM IST.' })

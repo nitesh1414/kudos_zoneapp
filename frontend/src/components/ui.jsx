@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { AlertTriangle, Inbox, Loader2, Star, X } from 'lucide-react'
 
-export function Card({ title, subtitle, right, icon: Icon, className = '', bodyClass = '', children }) {
+export function Card({ title, subtitle, right, icon: Icon, className = '', bodyClass = '', style, children }) {
   return (
-    <section className={`card animate-rise ${className}`}>
+    <section className={`card animate-rise ${className}`} style={style}>
       {(title || right) && (
         <header className="flex items-start justify-between gap-3 border-b border-white/5 px-4 py-3.5 sm:px-5">
           <div className="min-w-0">

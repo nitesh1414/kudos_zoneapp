@@ -50,9 +50,10 @@ export default function App() {
         <Route path="/dashboard/zones" element={<Zones />} />
         <Route path="/dashboard/base-rates" element={<BaseRates />} />
         <Route path="/dashboard/gap-cpr" element={<GapCpr />} />
-        {/* Temporarily hidden along with its NAV entry in Layout.jsx.
-        <Route path="/dashboard/sessions" element={<Sessions />} />
-        */}
+        <Route path="/dashboard/session" element={<Navigate to="/dashboard/sessions" replace />} />
+        <Route path="/dashboard/sessions/*" element={<Navigate to="/dashboard/sessions" replace />} />
+        <Route path="/sessions" element={<Navigate to="/dashboard/sessions" replace />} />
+        <Route path="/admin/sessions" element={<Navigate to="/dashboard/sessions" replace />} />
         <Route
           path="/admin/clients"
           element={

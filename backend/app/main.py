@@ -24,7 +24,7 @@ from . import market_calendar
 from .jobs import run_market_close
 from .seeding import DEFAULT_DAYS, date_window, recent_runs, seed_all, seed_broker
 from . import symbols as watchlist
-from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_recap, stats_days, stats_zones)
+from .service import (ZoneParams, dashboard_payload, match_check, next_session_sheet, recent_sessions, run_eod, session_chart, session_recap, stats_days, stats_zones)
 
 API_KEY = os.getenv("ZONEAPP_API_KEY", "")
 store = Store()
@@ -598,6 +598,18 @@ def candles(resolution:str="15",limit:int=500,symbol:str|None=None,user=Depends(
     if resolution not in INDIA_CANDLE_RESOLUTIONS: raise HTTPException(400,"Unsupported resolution")
     return records(store.recent_bars(resolve_symbol(user,symbol),resolution,min(max(limit,1),5000)))
 
+@app.get("/api/chart/session")
+def chart_session(date:str|None=None,date_from:str|None=None,date_to:str|None=None,
+                  resolution:str="15",symbol:str|None=None,user=Depends(current_user)):
+    """Candles plus the zone levels (and their results) for one session or a
+    date range, for the TradingView-style chart on the Overview tab. Default
+    is the last completed session with the next session's levels on top."""
+    if resolution not in INDIA_CANDLE_RESOLUTIONS: raise HTTPException(400,"Unsupported resolution")
+    try:
+        return session_chart(store,resolve_symbol(user,symbol),params(),date,date_from,date_to,resolution)
+    except ValueError as exc: raise HTTPException(400,str(exc))
+    except LookupError as exc: raise HTTPException(404,str(exc))
+
 @app.get("/api/health")
 def health(symbol:str|None=None,user=Depends(current_user)):
     symbol=resolve_symbol(user,symbol); c=store.counts(symbol)
@@ -686,4 +698,8 @@ def spa(full_path: str):
         return FileResponse(asset)
     if not SPA_INDEX.is_file():
         raise HTTPException(503, "Frontend build is missing. Run: cd frontend && npm install && npm run build")
-    return FileResponse(SPA_INDEX)
+    # The hashed JS/CSS bundles are safe to cache forever, but the un-hashed
+    # index must always be fresh: a stale page keeps running an older app
+    # whose routes may not exist any more (the Sessions tab then fell back to
+    # the Overview tab after an upgrade).
+    return FileResponse(SPA_INDEX, headers={"Cache-Control": "no-cache, must-revalidate"})

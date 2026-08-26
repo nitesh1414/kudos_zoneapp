@@ -253,6 +253,11 @@ class Store:
     def bars_for_day(self, symbol, d, resolution="15"):
         return self.q("SELECT ts,o,h,l,c FROM intraday_bars WHERE symbol=? AND resolution=? AND d=? ORDER BY ts", [symbol,resolution,d])
 
+    def bars_range(self, symbol, date_from, date_to, resolution="15", limit=5000):
+        """Candles for a date window (inclusive), oldest first, for charting."""
+        return self.q("SELECT ts,o,h,l,c,v FROM intraday_bars WHERE symbol=? AND resolution=? AND d BETWEEN ? AND ? ORDER BY ts LIMIT ?",
+                      [symbol,resolution,date_from,date_to,limit])
+
     def recent_bars(self, symbol, resolution="15", limit=500):
         return self.q("SELECT ts,o,h,l,c,v FROM intraday_bars WHERE symbol=? AND resolution=? ORDER BY ts DESC LIMIT ?", [symbol,resolution,limit]).sort_values("ts")
 
