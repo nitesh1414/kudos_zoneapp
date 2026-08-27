@@ -533,6 +533,56 @@ def _next_trading_day(store, day: str) -> str:
     return d.isoformat()
 
 
+def _scored_levels(sheet, outcomes, bars, p: ZoneParams = None):
+    """One session's zone levels, each carrying what it did that day.
+
+    When the market-close job has not scored the session yet (right after the
+    close, or a session that is still running) the outcome is derived from the
+    stored 15-minute bars so the chart is never blank.
+    """
+    if not outcomes and bars:
+        outcomes = {r['label']: r for r in evaluate_session(bars, _sheet_zones(sheet), p)}
+    rows = []
+    for z in _sheet_zones(sheet):
+        actual = outcomes.get(z.label)
+        rows.append(dict(label=z.label, lo=z.lo, hi=z.hi, key=z.key, key_name=z.key_name,
+                         side=_zone_side(z.label),
+                         result=_zone_result(actual) if actual else None))
+    rows.sort(key=lambda r: -r['key'])
+    return rows
+
+
+def _outcomes_window(store, symbol: str, date_from: str, date_to: str) -> dict:
+    """Stored zone outcomes for a date window, grouped by session date.
+
+    One query for the whole window — the chart asks for several sessions at
+    once and a per-session lookup would be O(n) round-trips.
+    """
+    rows = store.q('SELECT target_date,label,touched,bounced,broke,held FROM zone_outcomes '
+                   'WHERE symbol=? AND target_date BETWEEN ? AND ?',
+                   [symbol, date_from, date_to]).to_dict('records')
+    grouped = {}
+    for r in rows:
+        grouped.setdefault(str(r['target_date'])[:10], {})[r['label']] = r
+    return grouped
+
+
+def _bars_window(store, symbol: str, date_from: str, date_to: str) -> dict:
+    """15-minute bars for a date window, grouped by session date."""
+    frame = store.bars_range(symbol, date_from, date_to, '15')
+    if frame.empty:
+        return {}
+    frame = frame.rename(columns=str)
+    frame = frame.assign(day=frame['ts'].astype(str).str[:10])
+    return {str(day): group[['o', 'h', 'l', 'c']].to_dict('records')
+            for day, group in frame.groupby('day')}
+
+
+# A 62-session window would put ~550 level lines on one chart and be unreadable;
+# the chart labels the most recent sessions of the window and says so.
+MAX_DAY_LEVELS = 20
+
+
 def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
                   date_from: str = None, date_to: str = None, resolution: str = '15',
                   view: str = None):
@@ -547,6 +597,10 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
       latest / next  → last completed result + the actionable next sheet
       today          → today's session (running bars before close, result after)
       prev           → the previous completed session's result
+
+    `day_levels` carries one zone sheet per session drawn on the chart, so the
+    frontend can draw each level only across the candles of the day it belongs
+    to instead of a full-width line spanning the whole window.
     """
     p = p or ZoneParams()
     now = _now_ist()
@@ -632,31 +686,37 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
         idx_end = days.index(candle_end)
         candle_start = days[max(0, idx_end - 2)]
 
-    idx = days.index(end)
-    basis_meta = None
-    day_type = None
-    levels = []
-    outcomes = _outcome_for(store, symbol, end)
-    if idx > 0:
-        basis = daily.iloc[idx - 1]
+    # One zone sheet per session in the window, each built from the session
+    # before it. The chart draws a level only across its own day's candles, so
+    # the user can tell at a glance which line belongs to 25 Aug, 26 Aug, etc.
+    window = days[days.index(candle_start): days.index(candle_end) + 1]
+    day_levels_capped = len(window) > MAX_DAY_LEVELS
+    if day_levels_capped:
+        window = window[-MAX_DAY_LEVELS:]
+    outcomes_by_day = _outcomes_window(store, symbol, window[0], window[-1])
+    missing = [d for d in window if d not in outcomes_by_day]
+    bars_by_day = _bars_window(store, symbol, missing[0], missing[-1]) if missing else {}
+
+    day_levels = []
+    for day in window:
+        i = days.index(day)
+        if i == 0:
+            continue  # nothing stored before it, so there are no zones for it
+        basis = daily.iloc[i - 1]
         sheet = build_sheet(str(basis.d), float(basis.h), float(basis.l), float(basis.c), p)
-        if not outcomes:
-            # Candles are stored but the market-close job has not scored this
-            # session yet (e.g. right after the close). Derive the result from
-            # the stored 15-minute bars so the chart still shows it.
-            bars_15m = store.bars_for_day(symbol, end, '15')
-            if not bars_15m.empty:
-                recs = evaluate_session(bars_15m.rename(columns=str).to_dict('records'),
-                                        _sheet_zones(sheet), p)
-                outcomes = {r['label']: r for r in recs}
-        day_type = sheet.day_type
-        basis_meta = dict(date=str(basis.d), high=float(basis.h), low=float(basis.l), close=float(basis.c))
-        for z in _sheet_zones(sheet):
-            actual = outcomes.get(z.label)
-            levels.append(dict(label=z.label, lo=z.lo, hi=z.hi, key=z.key, key_name=z.key_name,
-                               side=_zone_side(z.label),
-                               result=_zone_result(actual) if actual else None))
-        levels.sort(key=lambda r: -r['key'])
+        day_levels.append(dict(
+            date=day,
+            basis=dict(date=str(basis.d), high=float(basis.h), low=float(basis.l), close=float(basis.c)),
+            day_type=sheet.day_type,
+            levels=_scored_levels(sheet, outcomes_by_day.get(day, {}), bars_by_day.get(day), p),
+        ))
+
+    # The single-session view the rest of the UI reads (chips, subtitle, badges)
+    # is the sheet of the session the chart is centred on.
+    focused = next((d for d in reversed(day_levels) if d['date'] == end), None)
+    basis_meta = focused['basis'] if focused else None
+    day_type = focused['day_type'] if focused else None
+    levels = focused['levels'] if focused else []
 
     # The next session sheet only makes sense at the actionable frontier: the
     # last completed session. It is never rendered on a historical/previous view.
@@ -683,6 +743,7 @@ def session_chart(store, symbol: str, p: ZoneParams = None, date: str = None,
                 first_date=first_date, last_date=last_date,
                 basis=basis_meta, day_type=day_type,
                 levels=levels, next_levels=next_levels,
+                day_levels=day_levels, day_levels_capped=day_levels_capped,
                 next_session_date=next_session_date,
                 next_session_kind=next_session_kind,
                 today=today, last_complete_date=last_complete,

@@ -20,6 +20,9 @@ rates. It does **not** place orders or produce trading advice.
 - `docs/METHODOLOGY.md` — the strategy document: every metric, its formula and
   the basis it is measured on. Served to the admin **Strategy & definitions**
   tab by `GET /api/methodology`, so the tab and the file cannot drift
+- `docs/WORKLOG.md` — **start here**: repository overview, run/test commands and
+  the append-only log of which commit/PR did which work. Update it after each
+  work session.
 - `backend/app/symbols.py` — administrator watchlist of tracked symbols
 - `backend/app/broker_store.py` — the single resolver that turns a stored,
   encrypted broker connection into a ready adapter for every dependent service
