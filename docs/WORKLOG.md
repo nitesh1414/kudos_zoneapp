@@ -104,7 +104,7 @@ number/title is the durable record.
 | #4 | — (shallow) | Hide Sessions tab from clients (admin-only) + VPS deployment guide. |
 | #5 | — (shallow) | Session chart on Overview; fix Sessions tab landing on Overview. |
 | #6 | `a49b96f` | Improve session chart: TradingView-style candles, slim levels, correct next-session logic. |
-| #7 | `0f9f288` (open) | Scope each session's zone levels to its own candles on the Overview chart. |
+| #7 | `0f9f288` (merged `2ab8dd5`) | Scope each session's zone levels to its own candles on the Overview chart. |
 
 ### Detail for the most recent work
 - **PR #6 (`a49b96f`)** — rebuilt the Overview chart as a lightweight-charts
@@ -120,7 +120,7 @@ number/title is the durable record.
 
 ## Current state & open items
 
-- **Merged:** PRs #1–#6. **Open:** PR #7 (`arena/01a0443a-kudos-zoneapp`).
+- **Merged:** PRs #1–#7 (latest merge `2ab8dd5`). **Open:** none.
 - Chart now renders per-session level segments; verified in-browser for a 3-session
   default view and an 8-session custom range.
 - Possible next steps (from prior sessions, not yet started): directional session
