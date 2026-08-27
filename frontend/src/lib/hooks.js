@@ -56,6 +56,13 @@ export const fmtDateTime = (value) => {
   return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
+/** '26 Aug' — the short session label used on the chart and its level chips. */
+export const shortDate = (value) => {
+  if (!value) return ''
+  const d = new Date(`${String(value).slice(0, 10)}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+}
+
 export const initials = (name = '') =>
   name
     .split(/[\s._-]+/)

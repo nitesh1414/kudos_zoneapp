@@ -1,52 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarRange, CandlestickChart, Expand, Minimize2, RefreshCw, RotateCcw } from 'lucide-react'
-import { ColorType, CrosshairMode, LineStyle, TickMarkType, createChart } from 'lightweight-charts'
-import { useApi, fmtDate, fmtNum } from '../lib/hooks.js'
+import { ColorType, CrosshairMode, TickMarkType, createChart } from 'lightweight-charts'
+import { useApi, fmtDate, fmtNum, shortDate } from '../lib/hooks.js'
 import { endpoints } from '../lib/api.js'
 import { useSymbol, withSymbol } from '../lib/symbol.jsx'
 import { Badge, Button, Card, Dot, Empty, ErrorState, Input, Skeleton } from './ui.jsx'
+import {
+  DOWN, NEXT_COLOR, RESULT_COLORS, UP, attachZoneLevels, fakeUtc, levelColor, levelModel, levelPriceRange,
+} from './chartLevels.js'
 
-const UP = '#22c55e'
-const DOWN = '#f43f5e'
-
-/** Line colour = what the zone did that session; unscored zones use the
- * side colours the rest of the app uses (R rose / S emerald / AT amber). */
-const RESULT_COLORS = { HELD: UP, BROKE: DOWN, TOUCHED: '#f59e0b', 'NOT REACHED': '#64748b' }
-const SIDE_COLORS = { R: '#fb7185', S: '#34d399', AT: '#fbbf24' }
-const NEXT_COLOR = '#818cf8' // next session's forward sheet: brand violet, dashed
 const GRID = 'rgba(148, 163, 184, 0.06)'
 const AXIS_BORDER = 'rgba(148, 163, 184, 0.16)'
 const AXIS_TEXT = '#8b96ad'
-
-/** Candle times are stored as Asia/Kolkata wall clock without a zone suffix.
- * Lightweight-charts renders timestamps as UTC, so feeding the wall clock in
- * as UTC seconds makes the axis print market time exactly. */
-const fakeUtc = (ts) => {
-  const m = String(ts).match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/)
-  if (!m) return null
-  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) / 1000
-}
-
-function levelColor(level, next) {
-  if (next) return NEXT_COLOR
-  if (level.result && RESULT_COLORS[level.result]) return RESULT_COLORS[level.result]
-  return SIDE_COLORS[level.side] || '#94a3b8'
-}
-
-/** Draw one compact, dotted price level. Full-width lines were cluttering the
- * chart, so we drop the edge lines and keep a single sparse dashed level
- * that reads as a tick/level marker, with the label on the right axis. */
-function drawLevel(series, level, next = false, tag = 'next') {
-  const color = levelColor(level, next)
-  series.createPriceLine({
-    price: level.key,
-    color: next ? `${color}b8` : `${color}78`,
-    lineWidth: 1,
-    lineStyle: next ? LineStyle.Dashed : LineStyle.SparseDotted,
-    axisLabelVisible: next,
-    title: next ? `${level.label} · ${tag}` : '',
-  })
-}
+/** Bars of empty space kept on the right: that is where the next session's
+ * forward sheet is drawn, so it needs room of its own. */
+const NEXT_OFFSET = 12
 
 /** The lightweight-charts instance itself. Recreated whenever the payload changes. */
 function ChartCanvas({ data }) {
@@ -61,6 +29,7 @@ function ChartCanvas({ data }) {
   useEffect(() => {
     const el = host.current
     if (!el || !data?.candles?.length) return undefined
+    const model = levelModel(data)
 
     const chart = createChart(el, {
       width: el.clientWidth,
@@ -83,7 +52,7 @@ function ChartCanvas({ data }) {
         secondsVisible: false,
         borderColor: AXIS_BORDER,
         barSpacing: 7,
-        rightOffset: 3,
+        rightOffset: model.next ? NEXT_OFFSET : 3,
         tickMarkFormatter: (time, type) => {
           const d = new Date(time * 1000)
           if (type <= TickMarkType.DayOfMonth)
@@ -103,6 +72,7 @@ function ChartCanvas({ data }) {
       },
     })
 
+    const levelRange = levelPriceRange(model)
     const candles = chart.addCandlestickSeries({
       upColor: UP,
       wickUpColor: 'rgba(34, 197, 94, 0.8)',
@@ -111,6 +81,15 @@ function ChartCanvas({ data }) {
       borderVisible: false,
       priceLineVisible: false,
       priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
+      // Widen the visible range to include every drawn level, so a line above
+      // the candle range is scaled into view instead of being clipped.
+      autoscaleInfoProvider: (base) => {
+        const original = base()
+        if (!levelRange) return original
+        const min = Math.min(levelRange.minValue, original?.priceRange?.minValue ?? levelRange.minValue)
+        const max = Math.max(levelRange.maxValue, original?.priceRange?.maxValue ?? levelRange.maxValue)
+        return { priceRange: { minValue: min, maxValue: max } }
+      },
     })
     const bars = data.candles.map((c) => ({
       time: fakeUtc(c.ts), open: +c.o, high: +c.h, low: +c.l, close: +c.c,
@@ -132,22 +111,10 @@ function ChartCanvas({ data }) {
     )
     chart.priceScale('').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } })
 
-    if (data.basis?.close)
-      candles.createPriceLine({
-        price: +data.basis.close,
-        color: '#64748b',
-        lineWidth: 1,
-        lineStyle: LineStyle.Dotted,
-        axisLabelVisible: false,
-        title: 'PDC',
-      })
-    // Levels are drawn as thin key-level lines — no wide boxes. Completed
-    // lines stay off the candle field (results are the chips below), while the
-    // actionable next/today levels are shown as dashed markers.
-    const isTodayOpenView = data.view === 'today' && data.date === data.today && data.session_complete === false
-    const nextTag = shortDate(data.next_session_date) || (isTodayOpenView ? 'today' : 'next')
-    if (isTodayOpenView) (data.levels || []).forEach((l) => drawLevel(candles, l, true, 'today'))
-    ;(data.next_levels || []).forEach((l) => drawLevel(candles, l, true, nextTag))
+    // Every level is drawn by chartLevels.js as a segment across its own
+    // session's candles only — a full-width line per zone per session made the
+    // window unreadable once more than one day was on screen.
+    const detachLevels = attachZoneLevels(chart, candles, model)
 
     chart.timeScale().fitContent()
 
@@ -182,6 +149,7 @@ function ChartCanvas({ data }) {
     ro.observe(el)
     return () => {
       ro.disconnect()
+      detachLevels()
       chart.remove()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -190,7 +158,7 @@ function ChartCanvas({ data }) {
   return (
     <div className="relative h-full min-h-[240px]">
       <div ref={host} className="absolute inset-0" />
-      <div className="num pointer-events-none absolute top-1.5 left-2 z-10 flex flex-wrap items-center gap-x-2.5 rounded-lg bg-ink-950/60 px-2 py-1 text-[10.5px] text-slate-400 ring-1 ring-white/8 backdrop-blur-sm">
+      <div className="num pointer-events-none absolute bottom-2 left-2 z-10 flex flex-wrap items-center gap-x-2.5 rounded-lg bg-ink-950/70 px-2 py-1 text-[10.5px] text-slate-400 ring-1 ring-white/8 backdrop-blur-sm">
         <span ref={legendDate} className="text-slate-500" />
         <span>O <b ref={legendO} className="text-slate-200" /></span>
         <span>H <b ref={legendH} className="text-emerald-400" /></span>
@@ -216,13 +184,6 @@ const QUICK = [
   ['prev', 'Prev'],
 ]
 
-/** '26 Aug' short label for an ISO date — used on next-session level lines. */
-const shortDate = (day) => {
-  if (!day) return ''
-  const d = new Date(`${String(day).slice(0, 10)}T00:00:00`)
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
-}
-
 function ZoneChip({ level, next = false }) {
   const color = levelColor(level, next)
   return (
@@ -232,6 +193,41 @@ function ZoneChip({ level, next = false }) {
       <span className="num text-[10.5px] text-slate-400">{fmtNum(level.key, 2)}</span>
       {level.result && <span style={{ color }} className="num text-[10px] font-semibold">{level.result}</span>}
     </span>
+  )
+}
+
+/** Sessions whose zones are listed as chips below the chart — the same ones
+ * the chart labels session by session. */
+const LEGEND_SESSIONS = 6
+
+/** The chips mirror the chart: one row per session, so every chip can be
+ * matched to the segment drawn above it. A window too long to label session by
+ * session falls back to the session the chart is centred on. */
+function ZoneLegend({ rows, data }) {
+  if (rows.length < 2)
+    return (
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        {(data.levels || []).map((l) => <ZoneChip key={`r-${l.label}`} level={l} />)}
+        {(data.next_levels || []).map((l) => <ZoneChip key={`n-${l.label}`} level={l} next />)}
+      </div>
+    )
+  return (
+    <div className="mt-2.5 space-y-1.5">
+      {rows.map((d) => (
+        <div key={d.date} className="flex flex-wrap items-center gap-1.5">
+          <span className="num w-14 shrink-0 text-[10.5px] font-semibold text-slate-300">{shortDate(d.date)}</span>
+          {d.levels.map((l) => <ZoneChip key={`${d.date}-${l.label}`} level={l} />)}
+        </div>
+      ))}
+      {data.next_levels?.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="num w-14 shrink-0 text-[10.5px] font-semibold text-indigo-300">
+            {shortDate(data.next_session_date) || 'Next'}
+          </span>
+          {data.next_levels.map((l) => <ZoneChip key={`n-${l.label}`} level={l} next />)}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -289,11 +285,15 @@ export default function SessionChart() {
     setPending({ from: '', to: '' })
   }
 
+  // The chips and the outcome counts cover the same sessions: the ones the
+  // chart labels session by session.
+  const legendRows = (data?.day_levels || []).slice(-LEGEND_SESSIONS)
+  const legendChips = legendRows.length > 1 ? legendRows.flatMap((d) => d.levels) : data?.levels || []
   const results = {}
-  ;(data?.levels || []).forEach((l) => {
+  legendChips.forEach((l) => {
     if (l.result) results[l.result] = (results[l.result] || 0) + 1
   })
-  const hasResults = (data?.levels || []).some((l) => l.result)
+  const hasResults = legendChips.some((l) => l.result)
   const isTodayOpen = ['today-open', 'today-closed'].includes(data?.next_session_kind)
   const isTodayOpenView = data?.view === 'today' && data?.date === data?.today && data?.session_complete === false
   const title = range
@@ -307,7 +307,7 @@ export default function SessionChart() {
     ? isTodayOpenView
       ? `Today ${shortDate(data.today)} · market running · zones from ${shortDate(data.last_complete_date)} close, no result yet`
       : `Result ${fmtDate(data.date)}${data.last_complete_date ? ` · last completed ${shortDate(data.last_complete_date)}` : ''}${data.next_session_date ? ` · next possible ${shortDate(data.next_session_date)}${isTodayOpen ? ` (today${data.next_session_kind === 'today-open' ? ', market not closed yet' : ', awaiting close data'})` : ''}` : ''}`
-    : '15-minute candles with compact session levels. Dashed violet lines = the next possible session; results are shown as chips below the chart.'
+    : '15-minute candles with each session’s zones drawn only across its own candles. The violet sheet to the right is the next possible session; results are listed per session below the chart.'
 
   return (
     <Card
@@ -426,10 +426,7 @@ export default function SessionChart() {
             <ChartCanvas key={`${symbol}:${data.date_from}:${data.date_to}:${data.resolution}:${data.view}`} data={data} />
           </div>
 
-          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-            {(data.levels || []).map((l) => <ZoneChip key={`r-${l.label}`} level={l} />)}
-            {(data.next_levels || []).map((l) => <ZoneChip key={`n-${l.label}`} level={l} next />)}
-          </div>
+          <ZoneLegend rows={legendRows} data={data} />
 
           <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-white/5 pt-2.5 text-[11px] text-slate-500">
             {hasResults &&
@@ -452,8 +449,12 @@ export default function SessionChart() {
             <span className="inline-flex items-center gap-1.5">
               <Dot tone="neutral" /> PDC · previous close
             </span>
+            <span className="inline-flex items-center gap-1.5 text-slate-600">
+              Each level is drawn across its own session only
+            </span>
             <span className="ml-auto">
               {fmtNum(data.candles.length)} candles · zones for {fmtDate(data.date)} from {data.basis ? fmtDate(data.basis.date) : '—'} close
+              {data.day_levels_capped && ' · level lines limited to the last 20 sessions'}
             </span>
           </div>
         </>

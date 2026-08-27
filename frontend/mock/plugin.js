@@ -195,6 +195,30 @@ const asLevel = (z, admin) =>
     admin ? { stars: Math.min(5, 1 + (fnv1a(z.members) % 5)) } : {},
   )
 
+/** One session's zones, built from the session before it — the shape the real
+ * backend returns in day_levels, so the chart's per-session level drawing can be
+ * previewed without PostgreSQL. A session still running has no results yet. */
+const daySheet = (day, admin) => {
+  const basisDay = snapDown(addDays(day, -1))
+  const sheet = mockZones(basisDay)
+  const { h: high, l: low, c: close } = dayOHLC(basisDay)
+  const rand = prng(fnv1a(`results:${day}`))
+  const RESULTS = ['HELD', 'TOUCHED', 'BROKE', 'NOT REACHED', 'TOUCHED', 'NOT REACHED']
+  const scored = day !== TODAY || TODAY_COMPLETE
+  return {
+    date: day,
+    basis: { date: basisDay, high, low, close },
+    day_type: sheet.dayType,
+    levels: sheet.zones.map((z) => ({
+      ...asLevel(z, admin),
+      result: scored ? RESULTS[Math.floor(rand() * RESULTS.length)] : null,
+    })),
+  }
+}
+
+// Mirrors MAX_DAY_LEVELS in backend/app/service.py.
+const MAX_DAY_LEVELS = 20
+
 /** Chart backend: mirrors session_chart() in the real service. The viewed
  * session's levels come from the previous business day's OHLC; the next
  * session's levels come from the viewed day's OHLC — two distinct line sets. */
@@ -243,13 +267,11 @@ const mockSessionChart = (res, q, symbol, admin) => {
   candleEnd = days[days.length - 1]
   candleStart = days[0]
 
-  // Zones in play for `levelEnd` are built from the previous stored session.
-  const basisDay = snapDown(addDays(levelEnd, -1))
-  const sheet = mockZones(basisDay)
-  const basis = dayOHLC(basisDay)
-  const rand = prng(fnv1a(`results:${levelEnd}`))
-  const RESULTS = ['HELD', 'TOUCHED', 'BROKE', 'NOT REACHED', 'TOUCHED', 'NOT REACHED']
-  const levels = sheet.zones.map((z) => ({ ...asLevel(z, admin), result: RESULTS[Math.floor(rand() * RESULTS.length)] }))
+  // One sheet per session drawn on the chart, each built from the session before
+  // it. The session the chart is centred on also fills the flat fields.
+  const capped = days.length > MAX_DAY_LEVELS
+  const dayLevels = (capped ? days.slice(-MAX_DAY_LEVELS) : days).map((d) => daySheet(d, admin))
+  const focused = dayLevels.find((d) => d.date === levelEnd) || dayLevels[dayLevels.length - 1] || null
 
   const isLatest = levelEnd === LAST_COMPLETE
   return json(res, {
@@ -261,9 +283,11 @@ const mockSessionChart = (res, q, symbol, admin) => {
     date_to: candleEnd,
     first_date: FIRST_STORED,
     last_date: LAST_STORED,
-    basis: { date: basisDay, high: basis.h, low: basis.l, close: basis.c },
-    day_type: sheet.dayType,
-    levels,
+    basis: focused ? focused.basis : null,
+    day_type: focused ? focused.day_type : null,
+    levels: focused ? focused.levels : [],
+    day_levels: dayLevels,
+    day_levels_capped: capped,
     next_levels: isLatest ? mockZones(levelEnd).zones.map((z) => asLevel(z, admin)) : [],
     next_session_date: isLatest ? NEXT_SESSION_DATE : null,
     next_session_kind: isLatest ? (NEXT_SESSION_DATE === TODAY ? 'today-open' : 'upcoming') : null,
